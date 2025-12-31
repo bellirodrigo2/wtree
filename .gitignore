@@ -1,0 +1,182 @@
+# Build directories
+build/
+build-*/
+bin/
+Testing/
+cmake-build-*/
+Debug/
+Release/
+MinSizeRel/
+RelWithDebInfo/
+
+todo
+
+# Test and benchmark folders
+test_*/
+tests/test_*/
+Testing/
+
+bench_*/
+
+# Object files
+*.o
+*.ko
+*.obj
+*.elf
+
+# Linker output
+*.ilk
+*.map
+*.exp
+
+# Libraries
+*.lib
+*.a
+*.la
+*.lo
+*.so
+*.so.*
+*.dylib
+*.dll
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps
+
+# Make
+.depend
+.deps
+
+# LMDB specific
+*.mdb
+lock.mdb
+data.mdb
+lmdb-*/
+
+# Test databases
+testdb/
+/tmp/testdb/
+*.db/
+
+# pkg-config
+*.pc
+!*.pc.in
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-*
+.clangd
+.cache/
+
+# Documentation
+docs/build/
+docs/_build/
+Doxyfile
+doxygen/
+*.dox
+
+# Test and coverage
+*.gcda
+*.gcno
+*.gcov
+coverage/
+coverage.info
+*.coverage
+htmlcov/
+.coverage
+.pytest_cache/
+test-results/
+
+# Logs
+*.log
+*.tlog
+*.lastbuildstate
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+.*.swp
+*~
+
+# OS files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Python (for test scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.Python
+venv/
+env/
+
+# Valgrind
+*.valgrind
+vgcore.*
+callgrind.out.*
+
+# Static analysis
+*.plist
+.clang-tidy
+compile_commands.json
+.clangd/
+
+# Binary patches
+*.patch
+!custom_compare.patch
+
+# Benchmark results
+bench/
+benchmark/
+*.bench
+
+# Core dumps
+core
+core.*
+*.core
+
+# Distribution packages
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.zip
+*.deb
+*.rpm
+dist/
+
+# AI tools
+.claude/
+ROADMAP.md
+COVERAGE.md
+INDEX_ROADMAP.md
+OPTIMIZATION.md
