@@ -89,6 +89,34 @@ typedef bool (*wtree3_index_key_fn)(
 typedef void (*wtree3_user_data_cleanup_fn)(void *user_data);
 
 /*
+ * Merge callback for upsert operations
+ *
+ * Called when upserting a key that already exists. Allows custom merge logic.
+ *
+ * Parameters:
+ *   existing_value - Current value in database
+ *   existing_len   - Current value length
+ *   new_value      - New value being inserted
+ *   new_len        - New value length
+ *   user_data      - User context passed during tree configuration
+ *   out_len        - Output: merged value length
+ *
+ * Returns:
+ *   Pointer to merged value (caller must allocate with malloc, freed by wtree)
+ *   NULL on error (upsert will fail)
+ *
+ * Note: If no merge callback is set, upsert overwrites with new_value
+ */
+typedef void* (*wtree3_merge_fn)(
+    const void *existing_value,
+    size_t existing_len,
+    const void *new_value,
+    size_t new_len,
+    void *user_data,
+    size_t *out_len
+);
+
+/*
  * Index configuration
  */
 typedef struct wtree3_index_config {
@@ -230,6 +258,9 @@ wtree3_db_t* wtree3_tree_get_db(wtree3_tree_t *tree);
 /* Set custom key comparison function */
 int wtree3_tree_set_compare(wtree3_tree_t *tree, MDB_cmp_func *cmp, gerror_t *error);
 
+/* Set merge callback for upsert operations */
+void wtree3_tree_set_merge_fn(wtree3_tree_t *tree, wtree3_merge_fn merge_fn, void *user_data);
+
 /* ============================================================
  * Index Management
  * ============================================================ */
@@ -340,6 +371,28 @@ int wtree3_update_txn(
 );
 
 /*
+ * Upsert a key-value pair (insert or update)
+ *
+ * If key doesn't exist, inserts it (same as insert_one_txn).
+ * If key exists:
+ *   - If tree has merge_fn set: calls merge_fn to combine existing + new values
+ *   - Otherwise: overwrites with new value (same as update_txn)
+ *
+ * Automatically:
+ * - Updates all index entries if value changes
+ * - Increments entry count only on new insert
+ *
+ * Returns: 0 on success, error code on failure
+ */
+int wtree3_upsert_txn(
+    wtree3_txn_t *txn,
+    wtree3_tree_t *tree,
+    const void *key, size_t key_len,
+    const void *value, size_t value_len,
+    gerror_t *error
+);
+
+/*
  * Delete a key-value pair
  *
  * Automatically:
@@ -396,6 +449,13 @@ int wtree3_insert_one(
 );
 
 int wtree3_update(
+    wtree3_tree_t *tree,
+    const void *key, size_t key_len,
+    const void *value, size_t value_len,
+    gerror_t *error
+);
+
+int wtree3_upsert(
     wtree3_tree_t *tree,
     const void *key, size_t key_len,
     const void *value, size_t value_len,

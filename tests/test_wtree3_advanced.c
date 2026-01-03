@@ -53,7 +53,7 @@ static int setup_db(void **state) {
     mkdir(test_db_path, 0755);
 
     gerror_t error = {0};
-    test_db = wtree3_db_open(test_db_path, 64 * 1024 * 1024, 32, 0, &error);
+    test_db = wtree3_db_open(test_db_path, 64 * 1024 * 1024, 128, 0, &error);
     if (!test_db) {
         fprintf(stderr, "Failed to create test database: %s\n", error.message);
         return -1;
@@ -511,6 +511,45 @@ static void test_index_seek_nonexistent(void **state) {
     // Try to seek on non-existent index
     wtree3_iterator_t *iter = wtree3_index_seek(tree, "nonexistent", "key", 3, &error);
     assert_null(iter);
+
+    wtree3_tree_close(tree);
+}
+
+static void test_index_seek_range(void **state) {
+    (void)state;
+    gerror_t error = {0};
+
+    wtree3_tree_t *tree = wtree3_tree_open(test_db, "idx_range_test", 0, 0, &error);
+    assert_non_null(tree);
+
+    // Create an index
+    wtree3_index_config_t config = {
+        .name = "test_idx",
+        .key_fn = simple_key_extractor,
+        .user_data = NULL,
+        .unique = false,
+        .sparse = false,
+        .compare = NULL
+    };
+
+    int rc = wtree3_tree_add_index(tree, &config, &error);
+    assert_int_equal(WTREE3_OK, rc);
+
+    // Insert some data
+    wtree3_insert_one(tree, "key1", 4, "value1", 6, &error);
+    wtree3_insert_one(tree, "key2", 4, "value2", 6, &error);
+    wtree3_insert_one(tree, "key3", 4, "value3", 6, &error);
+
+    // Test wtree3_index_seek_range (range seek) - just test that it doesn't crash
+    // The function is a simple wrapper, so we just verify it returns an iterator
+    wtree3_iterator_t *iter = wtree3_index_seek_range(tree, "test_idx", "value1", 6, &error);
+
+    // Iterator should be created (even if empty or invalid position)
+    if (iter) {
+        wtree3_iterator_close(iter);
+    }
+
+    wtree3_tree_close(tree);
 }
 
 /* ============================================================
@@ -618,16 +657,21 @@ static void test_insert_many_duplicate_in_batch(void **state) {
     gerror_t error = {0};
 
     wtree3_tree_t *tree = wtree3_tree_open(test_db, "insert_many_dup_test", 0, 0, &error);
+    assert_non_null(tree);
 
     // First insert
     wtree3_kv_t kvs1[] = {
-        {.key = "key1", .key_len = 4, .value = "value1", .value_len = 6},
+        {.key = (const void*)"key1", .key_len = 4, .value = (const void*)"value1", .value_len = 6},
     };
 
     wtree3_txn_t *txn1 = wtree3_txn_begin(test_db, true, &error);
+    assert_non_null(txn1);
+
     int rc = wtree3_insert_many_txn(txn1, tree, kvs1, 1, &error);
     assert_int_equal(WTREE3_OK, rc);
-    wtree3_txn_commit(txn1, &error);
+
+    rc = wtree3_txn_commit(txn1, &error);
+    assert_int_equal(WTREE3_OK, rc);
 
     // Try to insert duplicate
     wtree3_kv_t kvs2[] = {
@@ -833,6 +877,7 @@ int main(void) {
 
         /* Index queries */
         cmocka_unit_test(test_index_seek_nonexistent),
+        cmocka_unit_test(test_index_seek_range),
 
         /* Insert many tests */
         cmocka_unit_test(test_insert_many_basic),

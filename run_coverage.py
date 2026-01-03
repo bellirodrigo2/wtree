@@ -24,7 +24,7 @@ def run_command(cmd, cwd=None):
 def main():
     # Get project root
     project_root = Path(__file__).parent.absolute()
-    build_dir = project_root / "build-coverage"
+    build_dir = project_root / "build"
 
     print(f"Project root: {project_root}")
     print(f"Build directory: {build_dir}")
@@ -73,6 +73,7 @@ def main():
         "--exclude", r".*tests/.*",
         "--exclude", r".*build.*/.*",
         "--exclude", r".*_deps/.*",
+        "--gcov-ignore-parse-errors", "negative_hits.warn",  # Fix GCC gcov bug
         "--html", "--html-details",
         "-o", str(output_file),
         str(build_dir)
