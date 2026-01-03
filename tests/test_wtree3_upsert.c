@@ -607,6 +607,367 @@ static void test_upsert_large_merge(void **state) {
 }
 
 /* ============================================================
+ * Batch Upsert (upsert_many) Tests
+ * ============================================================ */
+
+static void test_upsert_many_basic(void **state) {
+    (void)state;
+    gerror_t error = {0};
+
+    wtree3_tree_t *tree = wtree3_tree_open(test_db, "upsert_many_basic", 0, 0, &error);
+    assert_non_null(tree);
+
+    /* Batch upsert - all new keys */
+    wtree3_kv_t kvs[] = {
+        {.key = "key1", .key_len = 4, .value = "value1", .value_len = 6},
+        {.key = "key2", .key_len = 4, .value = "value2", .value_len = 6},
+        {.key = "key3", .key_len = 4, .value = "value3", .value_len = 6},
+    };
+
+    wtree3_txn_t *txn = wtree3_txn_begin(test_db, true, &error);
+    assert_non_null(txn);
+
+    int rc = wtree3_upsert_many_txn(txn, tree, kvs, 3, &error);
+    assert_int_equal(WTREE3_OK, rc);
+
+    rc = wtree3_txn_commit(txn, &error);
+    assert_int_equal(WTREE3_OK, rc);
+
+    /* Verify all entries were inserted */
+    void *value;
+    size_t value_len;
+    rc = wtree3_get(tree, "key1", 4, &value, &value_len, &error);
+    assert_int_equal(WTREE3_OK, rc);
+    assert_memory_equal("value1", value, 6);
+    free(value);
+
+    assert_int_equal(3, wtree3_tree_count(tree));
+
+    wtree3_tree_close(tree);
+}
+
+static void test_upsert_many_mixed_insert_update(void **state) {
+    (void)state;
+    gerror_t error = {0};
+
+    wtree3_tree_t *tree = wtree3_tree_open(test_db, "upsert_many_mixed", 0, 0, &error);
+    assert_non_null(tree);
+
+    /* Insert initial keys */
+    int rc = wtree3_insert_one(tree, "key1", 4, "old1", 4, &error);
+    assert_int_equal(WTREE3_OK, rc);
+    rc = wtree3_insert_one(tree, "key3", 4, "old3", 4, &error);
+    assert_int_equal(WTREE3_OK, rc);
+
+    /* Batch upsert - mix of updates and inserts */
+    wtree3_kv_t kvs[] = {
+        {.key = "key1", .key_len = 4, .value = "new1", .value_len = 4},  // Update
+        {.key = "key2", .key_len = 4, .value = "new2", .value_len = 4},  // Insert
+        {.key = "key3", .key_len = 4, .value = "new3", .value_len = 4},  // Update
+        {.key = "key4", .key_len = 4, .value = "new4", .value_len = 4},  // Insert
+    };
+
+    wtree3_txn_t *txn = wtree3_txn_begin(test_db, true, &error);
+    assert_non_null(txn);
+
+    rc = wtree3_upsert_many_txn(txn, tree, kvs, 4, &error);
+    assert_int_equal(WTREE3_OK, rc);
+
+    rc = wtree3_txn_commit(txn, &error);
+    assert_int_equal(WTREE3_OK, rc);
+
+    /* Verify updates */
+    void *value;
+    size_t value_len;
+    rc = wtree3_get(tree, "key1", 4, &value, &value_len, &error);
+    assert_int_equal(WTREE3_OK, rc);
+    assert_memory_equal("new1", value, 4);
+    free(value);
+
+    rc = wtree3_get(tree, "key3", 4, &value, &value_len, &error);
+    assert_int_equal(WTREE3_OK, rc);
+    assert_memory_equal("new3", value, 4);
+    free(value);
+
+    /* Verify inserts */
+    rc = wtree3_get(tree, "key2", 4, &value, &value_len, &error);
+    assert_int_equal(WTREE3_OK, rc);
+    assert_memory_equal("new2", value, 4);
+    free(value);
+
+    /* Count should be 4 (2 initial + 2 new) */
+    assert_int_equal(4, wtree3_tree_count(tree));
+
+    wtree3_tree_close(tree);
+}
+
+static void test_upsert_many_with_merge(void **state) {
+    (void)state;
+    gerror_t error = {0};
+
+    wtree3_tree_t *tree = wtree3_tree_open(test_db, "upsert_many_merge", 0, 0, &error);
+    assert_non_null(tree);
+
+    /* Set concat merge callback */
+    wtree3_tree_set_merge_fn(tree, merge_concat, NULL);
+
+    /* Insert initial values */
+    int rc = wtree3_insert_one(tree, "key1", 4, "a", 1, &error);
+    assert_int_equal(WTREE3_OK, rc);
+    rc = wtree3_insert_one(tree, "key2", 4, "b", 1, &error);
+    assert_int_equal(WTREE3_OK, rc);
+
+    /* Batch upsert with merge */
+    wtree3_kv_t kvs[] = {
+        {.key = "key1", .key_len = 4, .value = "x", .value_len = 1},  // Merge: a+x
+        {.key = "key2", .key_len = 4, .value = "y", .value_len = 1},  // Merge: b+y
+        {.key = "key3", .key_len = 4, .value = "z", .value_len = 1},  // Insert: z
+    };
+
+    wtree3_txn_t *txn = wtree3_txn_begin(test_db, true, &error);
+    assert_non_null(txn);
+
+    rc = wtree3_upsert_many_txn(txn, tree, kvs, 3, &error);
+    assert_int_equal(WTREE3_OK, rc);
+
+    rc = wtree3_txn_commit(txn, &error);
+    assert_int_equal(WTREE3_OK, rc);
+
+    /* Verify merged values */
+    void *value;
+    size_t value_len;
+    rc = wtree3_get(tree, "key1", 4, &value, &value_len, &error);
+    assert_int_equal(WTREE3_OK, rc);
+    assert_int_equal(2, value_len);
+    assert_memory_equal("ax", value, 2);
+    free(value);
+
+    rc = wtree3_get(tree, "key2", 4, &value, &value_len, &error);
+    assert_int_equal(WTREE3_OK, rc);
+    assert_int_equal(2, value_len);
+    assert_memory_equal("by", value, 2);
+    free(value);
+
+    rc = wtree3_get(tree, "key3", 4, &value, &value_len, &error);
+    assert_int_equal(WTREE3_OK, rc);
+    assert_int_equal(1, value_len);
+    assert_memory_equal("z", value, 1);
+    free(value);
+
+    wtree3_tree_close(tree);
+}
+
+static void test_upsert_many_index_maintenance(void **state) {
+    (void)state;
+    gerror_t error = {0};
+
+    wtree3_tree_t *tree = wtree3_tree_open(test_db, "upsert_many_idx", 0, 0, &error);
+    assert_non_null(tree);
+
+    /* Add index */
+    wtree3_index_config_t idx_config = {
+        .name = "prefix_idx",
+        .key_fn = simple_key_extractor,
+        .user_data = NULL,
+        .user_data_cleanup = NULL,
+        .unique = false,
+        .sparse = false,
+        .compare = NULL
+    };
+
+    int rc = wtree3_tree_add_index(tree, &idx_config, &error);
+    assert_int_equal(WTREE3_OK, rc);
+
+    /* Insert initial data */
+    rc = wtree3_insert_one(tree, "k1", 2, "abc123", 6, &error);
+    assert_int_equal(WTREE3_OK, rc);
+
+    /* Batch upsert - changes index key */
+    wtree3_kv_t kvs[] = {
+        {.key = "k1", .key_len = 2, .value = "xyz789", .value_len = 6},  // Change prefix
+        {.key = "k2", .key_len = 2, .value = "abc456", .value_len = 6},  // New with abc
+    };
+
+    wtree3_txn_t *txn = wtree3_txn_begin(test_db, true, &error);
+    assert_non_null(txn);
+
+    rc = wtree3_upsert_many_txn(txn, tree, kvs, 2, &error);
+    assert_int_equal(WTREE3_OK, rc);
+
+    rc = wtree3_txn_commit(txn, &error);
+    assert_int_equal(WTREE3_OK, rc);
+
+    /* Search for "xyz" - should find k1 */
+    wtree3_iterator_t *iter = wtree3_index_seek(tree, "prefix_idx", "xyz", 3, &error);
+    assert_non_null(iter);
+    assert_true(wtree3_iterator_valid(iter));
+
+    const void *main_key;
+    size_t main_key_len;
+    wtree3_index_iterator_main_key(iter, &main_key, &main_key_len);
+    assert_int_equal(2, main_key_len);
+    assert_memory_equal("k1", main_key, 2);
+    wtree3_iterator_close(iter);
+
+    /* Search for "abc" - should find k2 (k1 no longer has abc prefix) */
+    iter = wtree3_index_seek(tree, "prefix_idx", "abc", 3, &error);
+    assert_non_null(iter);
+    assert_true(wtree3_iterator_valid(iter));
+    wtree3_index_iterator_main_key(iter, &main_key, &main_key_len);
+    assert_int_equal(2, main_key_len);
+    assert_memory_equal("k2", main_key, 2);
+    wtree3_iterator_close(iter);
+
+    wtree3_tree_close(tree);
+}
+
+static void test_upsert_many_error_cases(void **state) {
+    (void)state;
+    gerror_t error = {0};
+
+    wtree3_tree_t *tree = wtree3_tree_open(test_db, "upsert_many_err", 0, 0, &error);
+    assert_non_null(tree);
+
+    wtree3_kv_t kvs[] = {
+        {.key = "key1", .key_len = 4, .value = "value1", .value_len = 6},
+    };
+
+    /* Null transaction */
+    int rc = wtree3_upsert_many_txn(NULL, tree, kvs, 1, &error);
+    assert_int_equal(WTREE3_EINVAL, rc);
+
+    /* Null kvs */
+    wtree3_txn_t *txn = wtree3_txn_begin(test_db, true, &error);
+    rc = wtree3_upsert_many_txn(txn, tree, NULL, 1, &error);
+    assert_int_equal(WTREE3_EINVAL, rc);
+    wtree3_txn_abort(txn);
+
+    /* Zero count */
+    txn = wtree3_txn_begin(test_db, true, &error);
+    rc = wtree3_upsert_many_txn(txn, tree, kvs, 0, &error);
+    assert_int_equal(WTREE3_EINVAL, rc);
+    wtree3_txn_abort(txn);
+
+    /* Read-only transaction */
+    txn = wtree3_txn_begin(test_db, false, &error);
+    rc = wtree3_upsert_many_txn(txn, tree, kvs, 1, &error);
+    assert_int_equal(WTREE3_EINVAL, rc);
+    wtree3_txn_abort(txn);
+
+    wtree3_tree_close(tree);
+}
+
+static void test_upsert_many_unique_violation(void **state) {
+    (void)state;
+    gerror_t error = {0};
+
+    wtree3_tree_t *tree = wtree3_tree_open(test_db, "upsert_many_uniq_vio", 0, 0, &error);
+    assert_non_null(tree);
+
+    /* Add UNIQUE index */
+    wtree3_index_config_t idx_config = {
+        .name = "unique_prefix",
+        .key_fn = simple_key_extractor,
+        .user_data = NULL,
+        .user_data_cleanup = NULL,
+        .unique = true,
+        .sparse = false,
+        .compare = NULL
+    };
+
+    int rc = wtree3_tree_add_index(tree, &idx_config, &error);
+    assert_int_equal(WTREE3_OK, rc);
+
+    /* Insert initial data */
+    rc = wtree3_insert_one(tree, "k1", 2, "abc123", 6, &error);
+    assert_int_equal(WTREE3_OK, rc);
+    rc = wtree3_insert_one(tree, "k2", 2, "xyz789", 6, &error);
+    assert_int_equal(WTREE3_OK, rc);
+
+    /* Try to upsert k1 to have same prefix as k2 - should fail */
+    wtree3_kv_t kvs[] = {
+        {.key = "k1", .key_len = 2, .value = "xyz000", .value_len = 6},
+    };
+
+    wtree3_txn_t *txn = wtree3_txn_begin(test_db, true, &error);
+    assert_non_null(txn);
+
+    rc = wtree3_upsert_many_txn(txn, tree, kvs, 1, &error);
+    assert_int_equal(WTREE3_INDEX_ERROR, rc);
+
+    wtree3_txn_abort(txn);
+
+    /* Verify k1 still has old value */
+    void *value;
+    size_t value_len;
+    rc = wtree3_get(tree, "k1", 2, &value, &value_len, &error);
+    assert_int_equal(WTREE3_OK, rc);
+    assert_memory_equal("abc123", value, 6);
+    free(value);
+
+    wtree3_tree_close(tree);
+}
+
+static void test_upsert_many_counter_batch(void **state) {
+    (void)state;
+    gerror_t error = {0};
+
+    wtree3_tree_t *tree = wtree3_tree_open(test_db, "upsert_many_counter", 0, 0, &error);
+    assert_non_null(tree);
+
+    /* Set integer addition merge callback */
+    wtree3_tree_set_merge_fn(tree, merge_add_int, NULL);
+
+    /* Initialize counters */
+    int initial1 = 10;
+    int initial2 = 20;
+    int rc = wtree3_insert_one(tree, "counter1", 8, &initial1, sizeof(int), &error);
+    assert_int_equal(WTREE3_OK, rc);
+    rc = wtree3_insert_one(tree, "counter2", 8, &initial2, sizeof(int), &error);
+    assert_int_equal(WTREE3_OK, rc);
+
+    /* Batch increment */
+    int inc1 = 5;
+    int inc2 = 3;
+    int inc3 = 100;  // New counter
+    wtree3_kv_t kvs[] = {
+        {.key = "counter1", .key_len = 8, .value = &inc1, .value_len = sizeof(int)},
+        {.key = "counter2", .key_len = 8, .value = &inc2, .value_len = sizeof(int)},
+        {.key = "counter3", .key_len = 8, .value = &inc3, .value_len = sizeof(int)},
+    };
+
+    wtree3_txn_t *txn = wtree3_txn_begin(test_db, true, &error);
+    assert_non_null(txn);
+
+    rc = wtree3_upsert_many_txn(txn, tree, kvs, 3, &error);
+    assert_int_equal(WTREE3_OK, rc);
+
+    rc = wtree3_txn_commit(txn, &error);
+    assert_int_equal(WTREE3_OK, rc);
+
+    /* Verify results */
+    void *value;
+    size_t value_len;
+
+    rc = wtree3_get(tree, "counter1", 8, &value, &value_len, &error);
+    assert_int_equal(WTREE3_OK, rc);
+    assert_int_equal(15, *(int*)value);  // 10 + 5
+    free(value);
+
+    rc = wtree3_get(tree, "counter2", 8, &value, &value_len, &error);
+    assert_int_equal(WTREE3_OK, rc);
+    assert_int_equal(23, *(int*)value);  // 20 + 3
+    free(value);
+
+    rc = wtree3_get(tree, "counter3", 8, &value, &value_len, &error);
+    assert_int_equal(WTREE3_OK, rc);
+    assert_int_equal(100, *(int*)value);  // New counter
+    free(value);
+
+    wtree3_tree_close(tree);
+}
+
+/* ============================================================
  * Main
  * ============================================================ */
 
@@ -634,6 +995,15 @@ int main(void) {
         /* Edge cases */
         cmocka_unit_test(test_upsert_empty_value),
         cmocka_unit_test(test_upsert_large_merge),
+
+        /* Batch upsert tests */
+        cmocka_unit_test(test_upsert_many_basic),
+        cmocka_unit_test(test_upsert_many_mixed_insert_update),
+        cmocka_unit_test(test_upsert_many_with_merge),
+        cmocka_unit_test(test_upsert_many_index_maintenance),
+        cmocka_unit_test(test_upsert_many_error_cases),
+        cmocka_unit_test(test_upsert_many_unique_violation),
+        cmocka_unit_test(test_upsert_many_counter_batch),
     };
 
     return cmocka_run_group_tests(tests, setup_db, teardown_db);

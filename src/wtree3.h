@@ -117,6 +117,55 @@ typedef void* (*wtree3_merge_fn)(
 );
 
 /*
+ * Scan callback for range iteration
+ *
+ * Called for each key-value pair during range scan operations.
+ *
+ * Parameters:
+ *   key       - Current key (zero-copy, valid during callback only)
+ *   key_len   - Key length
+ *   value     - Current value (zero-copy, valid during callback only)
+ *   value_len - Value length
+ *   user_data - User context passed to scan function
+ *
+ * Returns:
+ *   true  - Continue scanning
+ *   false - Stop scanning (early termination)
+ */
+typedef bool (*wtree3_scan_fn)(
+    const void *key,
+    size_t key_len,
+    const void *value,
+    size_t value_len,
+    void *user_data
+);
+
+/*
+ * Modify callback for atomic read-modify-write operations
+ *
+ * Called to transform an existing value in-place within a transaction.
+ *
+ * Parameters:
+ *   existing_value - Current value in database (NULL if key doesn't exist)
+ *   existing_len   - Current value length (0 if key doesn't exist)
+ *   user_data      - User context passed to modify function
+ *   out_len        - Output: new value length
+ *
+ * Returns:
+ *   Pointer to new value (caller must allocate with malloc, freed by wtree)
+ *   NULL to delete the key (when existing_value is not NULL)
+ *   NULL to abort operation (when existing_value is NULL)
+ *
+ * Note: Returned value replaces existing value atomically
+ */
+typedef void* (*wtree3_modify_fn)(
+    const void *existing_value,
+    size_t existing_len,
+    void *user_data,
+    size_t *out_len
+);
+
+/*
  * Index configuration
  */
 typedef struct wtree3_index_config {
@@ -428,6 +477,14 @@ int wtree3_insert_many_txn(
     gerror_t *error
 );
 
+/* Upsert multiple key-value pairs (batch operation) */
+int wtree3_upsert_many_txn(
+    wtree3_txn_t *txn,
+    wtree3_tree_t *tree,
+    const wtree3_kv_t *kvs, size_t count,
+    gerror_t *error
+);
+
 /* ============================================================
  * Data Operations (Auto-transaction)
  *
@@ -472,6 +529,130 @@ int wtree3_delete_one(
 bool wtree3_exists(
     wtree3_tree_t *tree,
     const void *key, size_t key_len,
+    gerror_t *error
+);
+
+/* ============================================================
+ * Tier 1 Operations - Generic Low-Level Primitives
+ * ============================================================ */
+
+/*
+ * Scan a range of key-value pairs (forward)
+ *
+ * Iterates keys in ascending order within [start_key, end_key].
+ * Pass NULL for start_key to scan from beginning.
+ * Pass NULL for end_key to scan to end.
+ *
+ * Parameters:
+ *   txn       - Transaction handle
+ *   tree      - Tree to scan
+ *   start_key - Start key (inclusive, NULL for first key)
+ *   start_len - Start key length
+ *   end_key   - End key (inclusive, NULL for last key)
+ *   end_len   - End key length
+ *   scan_fn   - Callback for each entry (return false to stop early)
+ *   user_data - Context passed to callback
+ *
+ * Returns: 0 on success, error code on failure
+ */
+int wtree3_scan_range_txn(
+    wtree3_txn_t *txn,
+    wtree3_tree_t *tree,
+    const void *start_key, size_t start_len,
+    const void *end_key, size_t end_len,
+    wtree3_scan_fn scan_fn,
+    void *user_data,
+    gerror_t *error
+);
+
+/*
+ * Scan a range of key-value pairs (reverse)
+ *
+ * Iterates keys in descending order within [start_key, end_key].
+ * Pass NULL for start_key to scan from end.
+ * Pass NULL for end_key to scan to beginning.
+ *
+ * Returns: 0 on success, error code on failure
+ */
+int wtree3_scan_reverse_txn(
+    wtree3_txn_t *txn,
+    wtree3_tree_t *tree,
+    const void *start_key, size_t start_len,
+    const void *end_key, size_t end_len,
+    wtree3_scan_fn scan_fn,
+    void *user_data,
+    gerror_t *error
+);
+
+/*
+ * Scan all keys with a given prefix
+ *
+ * Iterates all keys that start with prefix in ascending order.
+ *
+ * Parameters:
+ *   prefix     - Key prefix to match
+ *   prefix_len - Prefix length
+ *
+ * Returns: 0 on success, error code on failure
+ */
+int wtree3_scan_prefix_txn(
+    wtree3_txn_t *txn,
+    wtree3_tree_t *tree,
+    const void *prefix, size_t prefix_len,
+    wtree3_scan_fn scan_fn,
+    void *user_data,
+    gerror_t *error
+);
+
+/*
+ * Atomic read-modify-write operation
+ *
+ * Reads current value, calls modify_fn to transform it, writes result.
+ * All happens atomically within transaction.
+ *
+ * Automatically maintains indexes:
+ * - If modify_fn returns NULL for existing key: deletes entry
+ * - If modify_fn returns value for missing key: inserts entry
+ * - If modify_fn returns value for existing key: updates entry
+ *
+ * Parameters:
+ *   key       - Key to modify
+ *   modify_fn - Transformation callback
+ *   user_data - Context passed to callback
+ *
+ * Returns: 0 on success, error code on failure
+ */
+int wtree3_modify_txn(
+    wtree3_txn_t *txn,
+    wtree3_tree_t *tree,
+    const void *key, size_t key_len,
+    wtree3_modify_fn modify_fn,
+    void *user_data,
+    gerror_t *error
+);
+
+/*
+ * Batch read operation
+ *
+ * Reads multiple keys in a single transaction.
+ * For each key in keys array, writes pointer to value in values array.
+ *
+ * Parameters:
+ *   keys       - Array of keys to read
+ *   key_count  - Number of keys
+ *   values     - Output: array of value pointers (zero-copy, valid during txn)
+ *   value_lens - Output: array of value lengths
+ *
+ * Note: If a key doesn't exist, corresponding value pointer is set to NULL
+ *       and value_len to 0. This is NOT an error.
+ *
+ * Returns: 0 on success, error code on failure
+ */
+int wtree3_get_many_txn(
+    wtree3_txn_t *txn,
+    wtree3_tree_t *tree,
+    const wtree3_kv_t *keys, size_t key_count,
+    const void **values, size_t *value_lens,
     gerror_t *error
 );
 

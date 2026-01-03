@@ -78,6 +78,12 @@ target_include_directories(test_wtree3_stress PRIVATE ${cmocka_SOURCE_DIR}/inclu
 target_link_libraries(test_wtree3_stress PRIVATE wtree3 ${CMOCKA_LIBRARY})
 add_test(NAME test_wtree3_stress COMMAND test_wtree3_stress)
 
+# Test for wtree3 Tier 1 operations
+add_executable(test_wtree3_tier1 test_wtree3_tier1.c)
+target_include_directories(test_wtree3_tier1 PRIVATE ${cmocka_SOURCE_DIR}/include)
+target_link_libraries(test_wtree3_tier1 PRIVATE wtree3 ${CMOCKA_LIBRARY})
+add_test(NAME test_wtree3_tier1 COMMAND test_wtree3_tier1)
+
 # Platform-specific settings
 if(WIN32)
     target_compile_definitions(test_gerror PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -89,6 +95,7 @@ if(WIN32)
     target_compile_definitions(test_wt_queue PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wt_queue_stress PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wtree3_stress PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(test_wtree3_tier1 PRIVATE _CRT_SECURE_NO_WARNINGS)
 
     # Copy cmocka DLL to test directory on Windows
     add_custom_command(TARGET test_gerror POST_BUILD
@@ -151,6 +158,13 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:cmocka>
             $<TARGET_FILE_DIR:test_wtree3_stress>
+        COMMENT "Copying cmocka DLL to test directory"
+    )
+
+    add_custom_command(TARGET test_wtree3_tier1 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:cmocka>
+            $<TARGET_FILE_DIR:test_wtree3_tier1>
         COMMENT "Copying cmocka DLL to test directory"
     )
 
@@ -219,6 +233,12 @@ if(WIN32)
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                         ${DLL}
                         $<TARGET_FILE_DIR:test_wtree3_stress>
+                    COMMENT "Copying ${DLL}"
+                )
+                add_custom_command(TARGET test_wtree3_tier1 POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        ${DLL}
+                        $<TARGET_FILE_DIR:test_wtree3_tier1>
                     COMMENT "Copying ${DLL}"
                 )
             endif()

@@ -1049,6 +1049,28 @@ int wtree3_insert_many_txn(wtree3_txn_t *txn, wtree3_tree_t *tree,
     return WTREE3_OK;
 }
 
+int wtree3_upsert_many_txn(wtree3_txn_t *txn, wtree3_tree_t *tree,
+                            const wtree3_kv_t *kvs, size_t count,
+                            gerror_t *error) {
+    if (!txn || !tree || !kvs || count == 0) {
+        set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Invalid parameters");
+        return WTREE3_EINVAL;
+    }
+
+    if (!txn->is_write) {
+        set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Write operation requires write transaction");
+        return WTREE3_EINVAL;
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        int rc = wtree3_upsert_txn(txn, tree, kvs[i].key, kvs[i].key_len,
+                                    kvs[i].value, kvs[i].value_len, error);
+        if (rc != 0) return rc;
+    }
+
+    return WTREE3_OK;
+}
+
 /* ============================================================
  * Data Operations (Auto-transaction)
  * ============================================================ */
@@ -1503,6 +1525,314 @@ bool wtree3_index_iterator_main_key(wtree3_iterator_t *iter,
     /* In index iterator, "value" is the main tree key */
     return iter && iter->is_index &&
            wtree3_iterator_value(iter, main_key, main_key_len);
+}
+
+/* ============================================================
+ * Tier 1 Operations - Generic Low-Level Primitives
+ * ============================================================ */
+
+int wtree3_scan_range_txn(
+    wtree3_txn_t *txn,
+    wtree3_tree_t *tree,
+    const void *start_key, size_t start_len,
+    const void *end_key, size_t end_len,
+    wtree3_scan_fn scan_fn,
+    void *user_data,
+    gerror_t *error
+) {
+    if (!txn || !tree || !scan_fn) {
+        set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Invalid parameters");
+        return WTREE3_EINVAL;
+    }
+
+    MDB_cursor *cursor;
+    int rc = mdb_cursor_open(txn->txn, tree->dbi, &cursor);
+    if (rc != 0) return translate_mdb_error(rc, error);
+
+    MDB_val key, val;
+    MDB_cursor_op op;
+
+    /* Position cursor at start */
+    if (start_key) {
+        key.mv_size = start_len;
+        key.mv_data = (void*)start_key;
+        op = MDB_SET_RANGE;  /* Position at key or next greater */
+    } else {
+        op = MDB_FIRST;  /* Start from beginning */
+    }
+
+    rc = mdb_cursor_get(cursor, &key, &val, op);
+
+    /* Iterate forward */
+    while (rc == 0) {
+        /* Check if we've passed end_key */
+        if (end_key) {
+            MDB_val end = {.mv_size = end_len, .mv_data = (void*)end_key};
+            if (mdb_cmp(txn->txn, tree->dbi, &key, &end) > 0) {
+                break;  /* Past end key */
+            }
+        }
+
+        /* Call user callback */
+        bool continue_scan = scan_fn(key.mv_data, key.mv_size,
+                                      val.mv_data, val.mv_size,
+                                      user_data);
+        if (!continue_scan) {
+            break;  /* Early termination */
+        }
+
+        /* Move to next entry */
+        rc = mdb_cursor_get(cursor, &key, &val, MDB_NEXT);
+    }
+
+    mdb_cursor_close(cursor);
+
+    if (rc != 0 && rc != MDB_NOTFOUND) {
+        return translate_mdb_error(rc, error);
+    }
+
+    return WTREE3_OK;
+}
+
+int wtree3_scan_reverse_txn(
+    wtree3_txn_t *txn,
+    wtree3_tree_t *tree,
+    const void *start_key, size_t start_len,
+    const void *end_key, size_t end_len,
+    wtree3_scan_fn scan_fn,
+    void *user_data,
+    gerror_t *error
+) {
+    if (!txn || !tree || !scan_fn) {
+        set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Invalid parameters");
+        return WTREE3_EINVAL;
+    }
+
+    MDB_cursor *cursor;
+    int rc = mdb_cursor_open(txn->txn, tree->dbi, &cursor);
+    if (rc != 0) return translate_mdb_error(rc, error);
+
+    MDB_val key, val;
+    MDB_cursor_op op;
+
+    /* Position cursor at start (for reverse, start means "high bound") */
+    if (start_key) {
+        key.mv_size = start_len;
+        key.mv_data = (void*)start_key;
+        op = MDB_SET_RANGE;  /* Position at key or next greater */
+        rc = mdb_cursor_get(cursor, &key, &val, op);
+
+        /* If we landed past start_key, move back to start_key or previous */
+        if (rc == 0) {
+            MDB_val start = {.mv_size = start_len, .mv_data = (void*)start_key};
+            if (mdb_cmp(txn->txn, tree->dbi, &key, &start) > 0) {
+                rc = mdb_cursor_get(cursor, &key, &val, MDB_PREV);
+            }
+        } else if (rc == MDB_NOTFOUND) {
+            /* No key >= start_key, start from last */
+            rc = mdb_cursor_get(cursor, &key, &val, MDB_LAST);
+        }
+    } else {
+        /* Start from end */
+        op = MDB_LAST;
+        rc = mdb_cursor_get(cursor, &key, &val, op);
+    }
+
+    /* Iterate backward */
+    while (rc == 0) {
+        /* Check if we've passed end_key (for reverse, end means "low bound") */
+        if (end_key) {
+            MDB_val end = {.mv_size = end_len, .mv_data = (void*)end_key};
+            if (mdb_cmp(txn->txn, tree->dbi, &key, &end) < 0) {
+                break;  /* Past end key (lower bound) */
+            }
+        }
+
+        /* Call user callback */
+        bool continue_scan = scan_fn(key.mv_data, key.mv_size,
+                                      val.mv_data, val.mv_size,
+                                      user_data);
+        if (!continue_scan) {
+            break;  /* Early termination */
+        }
+
+        /* Move to previous entry */
+        rc = mdb_cursor_get(cursor, &key, &val, MDB_PREV);
+    }
+
+    mdb_cursor_close(cursor);
+
+    if (rc != 0 && rc != MDB_NOTFOUND) {
+        return translate_mdb_error(rc, error);
+    }
+
+    return WTREE3_OK;
+}
+
+int wtree3_scan_prefix_txn(
+    wtree3_txn_t *txn,
+    wtree3_tree_t *tree,
+    const void *prefix, size_t prefix_len,
+    wtree3_scan_fn scan_fn,
+    void *user_data,
+    gerror_t *error
+) {
+    if (!txn || !tree || !prefix || !scan_fn) {
+        set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Invalid parameters");
+        return WTREE3_EINVAL;
+    }
+
+    MDB_cursor *cursor;
+    int rc = mdb_cursor_open(txn->txn, tree->dbi, &cursor);
+    if (rc != 0) return translate_mdb_error(rc, error);
+
+    MDB_val key, val;
+
+    /* Position at prefix or next greater */
+    key.mv_size = prefix_len;
+    key.mv_data = (void*)prefix;
+    rc = mdb_cursor_get(cursor, &key, &val, MDB_SET_RANGE);
+
+    /* Iterate while keys match prefix */
+    while (rc == 0) {
+        /* Check if current key still matches prefix */
+        if (key.mv_size < prefix_len ||
+            memcmp(key.mv_data, prefix, prefix_len) != 0) {
+            break;  /* No longer matches prefix */
+        }
+
+        /* Call user callback */
+        bool continue_scan = scan_fn(key.mv_data, key.mv_size,
+                                      val.mv_data, val.mv_size,
+                                      user_data);
+        if (!continue_scan) {
+            break;  /* Early termination */
+        }
+
+        /* Move to next entry */
+        rc = mdb_cursor_get(cursor, &key, &val, MDB_NEXT);
+    }
+
+    mdb_cursor_close(cursor);
+
+    if (rc != 0 && rc != MDB_NOTFOUND) {
+        return translate_mdb_error(rc, error);
+    }
+
+    return WTREE3_OK;
+}
+
+int wtree3_modify_txn(
+    wtree3_txn_t *txn,
+    wtree3_tree_t *tree,
+    const void *key, size_t key_len,
+    wtree3_modify_fn modify_fn,
+    void *user_data,
+    gerror_t *error
+) {
+    if (!txn || !tree || !key || !modify_fn) {
+        set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Invalid parameters");
+        return WTREE3_EINVAL;
+    }
+
+    if (!txn->is_write) {
+        set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Write operation requires write transaction");
+        return WTREE3_EINVAL;
+    }
+
+    /* Get existing value */
+    MDB_val mkey = {.mv_size = key_len, .mv_data = (void*)key};
+    MDB_val old_val;
+    int rc = mdb_get(txn->txn, tree->dbi, &mkey, &old_val);
+
+    const void *existing_value = NULL;
+    size_t existing_len = 0;
+    bool key_exists = false;
+
+    if (rc == 0) {
+        existing_value = old_val.mv_data;
+        existing_len = old_val.mv_size;
+        key_exists = true;
+    } else if (rc != MDB_NOTFOUND) {
+        return translate_mdb_error(rc, error);
+    }
+
+    /* Call modify callback */
+    size_t new_len;
+    void *new_value = modify_fn(existing_value, existing_len, user_data, &new_len);
+
+    /* Handle different cases based on modify_fn result */
+    if (!new_value) {
+        if (key_exists) {
+            /* Delete the key */
+            bool deleted;
+            return wtree3_delete_one_txn(txn, tree, key, key_len, &deleted, error);
+        } else {
+            /* Abort operation (key doesn't exist and callback returned NULL) */
+            return WTREE3_OK;
+        }
+    }
+
+    /* We have a new value to write */
+    if (key_exists) {
+        /* Update existing key */
+        rc = indexes_delete(tree, txn->txn, key, key_len, old_val.mv_data, old_val.mv_size, error);
+        if (rc != 0) {
+            free(new_value);
+            return rc;
+        }
+
+        rc = indexes_insert(tree, txn->txn, key, key_len, new_value, new_len, error);
+        if (rc != 0) {
+            free(new_value);
+            return rc;
+        }
+
+        MDB_val mval = {.mv_size = new_len, .mv_data = new_value};
+        rc = mdb_put(txn->txn, tree->dbi, &mkey, &mval, 0);
+        free(new_value);
+
+        if (rc != 0) return translate_mdb_error(rc, error);
+    } else {
+        /* Insert new key */
+        rc = wtree3_insert_one_txn(txn, tree, key, key_len, new_value, new_len, error);
+        free(new_value);
+        if (rc != 0) return rc;
+    }
+
+    return WTREE3_OK;
+}
+
+int wtree3_get_many_txn(
+    wtree3_txn_t *txn,
+    wtree3_tree_t *tree,
+    const wtree3_kv_t *keys, size_t key_count,
+    const void **values, size_t *value_lens,
+    gerror_t *error
+) {
+    if (!txn || !tree || !keys || !values || !value_lens || key_count == 0) {
+        set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Invalid parameters");
+        return WTREE3_EINVAL;
+    }
+
+    for (size_t i = 0; i < key_count; i++) {
+        MDB_val mkey = {.mv_size = keys[i].key_len, .mv_data = (void*)keys[i].key};
+        MDB_val mval;
+
+        int rc = mdb_get(txn->txn, tree->dbi, &mkey, &mval);
+
+        if (rc == 0) {
+            values[i] = mval.mv_data;
+            value_lens[i] = mval.mv_size;
+        } else if (rc == MDB_NOTFOUND) {
+            values[i] = NULL;
+            value_lens[i] = 0;
+        } else {
+            return translate_mdb_error(rc, error);
+        }
+    }
+
+    return WTREE3_OK;
 }
 
 /* ============================================================
