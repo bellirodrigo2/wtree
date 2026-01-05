@@ -85,21 +85,22 @@ if(WIN32)
     target_compile_definitions(lmdb PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
 
-# Build wt_queue library
-add_library(wt_queue STATIC
-    src/wt_queue.c
+# Build wqueue library
+add_library(wqueue STATIC
+    src/wqueue.c
+    src/wbuffer.c
     src/wt_sync.c
 )
 
-target_include_directories(wt_queue PUBLIC
+target_include_directories(wqueue PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-# Platform-specific libraries for wt_queue
+# Platform-specific libraries for wqueue
 if(WIN32)
-    target_compile_definitions(wt_queue PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(wqueue PRIVATE _CRT_SECURE_NO_WARNINGS)
 else()
-    target_link_libraries(wt_queue PUBLIC pthread)
+    target_link_libraries(wqueue PUBLIC pthread)
 endif()
 
 # Build wtree3 library

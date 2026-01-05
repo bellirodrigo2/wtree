@@ -4,6 +4,10 @@
 
 #include "wt_sync.h"
 
+#ifdef _WIN32
+#include <process.h>  /* For _beginthreadex */
+#endif
+
 /* ============================================================
  * Mutex Implementation
  * ============================================================ */
@@ -178,5 +182,37 @@ void wt_event_reset(wt_event_t *event) {
     pthread_mutex_lock(&event->mutex);
     event->signaled = false;
     pthread_mutex_unlock(&event->mutex);
+#endif
+}
+
+/* ============================================================
+ * Thread Implementation
+ * ============================================================ */
+
+int wt_thread_create(wt_thread_t *thread, wt_thread_func_t func, void *arg) {
+    if (!thread || !func) return -1;
+
+#ifdef _WIN32
+    *thread = (HANDLE)_beginthreadex(NULL, 0, func, arg, 0, NULL);
+    return (*thread == NULL) ? -1 : 0;
+#else
+    return pthread_create(thread, NULL, func, arg);
+#endif
+}
+
+void wt_thread_join(wt_thread_t *thread) {
+    if (!thread) return;
+
+#ifdef _WIN32
+    if (*thread) {
+        WaitForSingleObject(*thread, INFINITE);
+        CloseHandle(*thread);
+        *thread = NULL;
+    }
+#else
+    if (*thread) {
+        pthread_join(*thread, NULL);
+        *thread = 0;
+    }
 #endif
 }

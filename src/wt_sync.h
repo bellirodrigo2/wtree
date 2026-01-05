@@ -158,6 +158,37 @@ void wt_event_set(wt_event_t *event);
  */
 void wt_event_reset(wt_event_t *event);
 
+/* ============================================================
+ * Thread (cross-platform thread creation and management)
+ * ============================================================ */
+
+#ifdef _WIN32
+typedef HANDLE wt_thread_t;
+typedef unsigned int (__stdcall *wt_thread_func_t)(void *arg);
+#define WT_THREAD_FUNC(name) unsigned int __stdcall name(void *arg)
+#define WT_THREAD_RETURN(val) return (unsigned int)(val)
+#else
+typedef pthread_t wt_thread_t;
+typedef void *(*wt_thread_func_t)(void *arg);
+#define WT_THREAD_FUNC(name) void *name(void *arg)
+#define WT_THREAD_RETURN(val) return (void*)(val)
+#endif
+
+/**
+ * @brief Create a new thread
+ * @param thread Pointer to thread handle
+ * @param func Thread function
+ * @param arg Argument to pass to thread function
+ * @return 0 on success, -1 on failure
+ */
+int wt_thread_create(wt_thread_t *thread, wt_thread_func_t func, void *arg);
+
+/**
+ * @brief Wait for thread to finish
+ * @param thread Thread handle
+ */
+void wt_thread_join(wt_thread_t *thread);
+
 #ifdef __cplusplus
 }
 #endif

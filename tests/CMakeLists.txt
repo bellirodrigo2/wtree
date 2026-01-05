@@ -60,18 +60,6 @@ target_include_directories(test_error_translation PRIVATE ${cmocka_SOURCE_DIR}/i
 target_link_libraries(test_error_translation PRIVATE wtree3 ${CMOCKA_LIBRARY})
 add_test(NAME test_error_translation COMMAND test_error_translation)
 
-# Test for wt_queue module
-add_executable(test_wt_queue test_wt_queue.c)
-target_include_directories(test_wt_queue PRIVATE ${cmocka_SOURCE_DIR}/include)
-target_link_libraries(test_wt_queue PRIVATE wt_queue ${CMOCKA_LIBRARY})
-add_test(NAME test_wt_queue COMMAND test_wt_queue)
-
-# Stress test for wt_queue
-add_executable(test_wt_queue_stress test_wt_queue_stress.c)
-target_include_directories(test_wt_queue_stress PRIVATE ${cmocka_SOURCE_DIR}/include)
-target_link_libraries(test_wt_queue_stress PRIVATE wt_queue ${CMOCKA_LIBRARY})
-add_test(NAME test_wt_queue_stress COMMAND test_wt_queue_stress)
-
 # Stress test for wtree3
 add_executable(test_wtree3_stress test_wtree3_stress.c)
 target_include_directories(test_wtree3_stress PRIVATE ${cmocka_SOURCE_DIR}/include)
@@ -84,6 +72,42 @@ target_include_directories(test_wtree3_tier1 PRIVATE ${cmocka_SOURCE_DIR}/includ
 target_link_libraries(test_wtree3_tier1 PRIVATE wtree3 ${CMOCKA_LIBRARY})
 add_test(NAME test_wtree3_tier1 COMMAND test_wtree3_tier1)
 
+# Test for wtree3 Tier 2 operations
+add_executable(test_wtree3_tier2 test_wtree3_tier2.c)
+target_include_directories(test_wtree3_tier2 PRIVATE ${cmocka_SOURCE_DIR}/include)
+target_link_libraries(test_wtree3_tier2 PRIVATE wtree3 ${CMOCKA_LIBRARY})
+add_test(NAME test_wtree3_tier2 COMMAND test_wtree3_tier2)
+
+# Test for wtree3 coverage improvement (NULL checks and edge cases)
+add_executable(test_wtree3_coverage test_wtree3_coverage.c)
+target_include_directories(test_wtree3_coverage PRIVATE ${cmocka_SOURCE_DIR}/include)
+target_link_libraries(test_wtree3_coverage PRIVATE wtree3 ${CMOCKA_LIBRARY})
+add_test(NAME test_wtree3_coverage COMMAND test_wtree3_coverage)
+
+# Test for wtree3 persistence and metadata operations
+add_executable(test_wtree3_persistence test_wtree3_persistence.c)
+target_include_directories(test_wtree3_persistence PRIVATE ${cmocka_SOURCE_DIR}/include)
+target_link_libraries(test_wtree3_persistence PRIVATE wtree3 ${CMOCKA_LIBRARY})
+add_test(NAME test_wtree3_persistence COMMAND test_wtree3_persistence)
+
+# Test for wbuffer module
+add_executable(test_wbuffer test_wbuffer.c)
+target_include_directories(test_wbuffer PRIVATE ${cmocka_SOURCE_DIR}/include)
+target_link_libraries(test_wbuffer PRIVATE wqueue ${CMOCKA_LIBRARY})
+add_test(NAME test_wbuffer COMMAND test_wbuffer)
+
+# Test for wqueue module (new simplified implementation)
+add_executable(test_wqueue test_wqueue.c)
+target_include_directories(test_wqueue PRIVATE ${cmocka_SOURCE_DIR}/include)
+target_link_libraries(test_wqueue PRIVATE wqueue ${CMOCKA_LIBRARY})
+add_test(NAME test_wqueue COMMAND test_wqueue)
+
+# Test for wqueue MPSC multithreaded tests
+add_executable(test_wqueue_mpsc test_wqueue_mpsc.c)
+target_include_directories(test_wqueue_mpsc PRIVATE ${cmocka_SOURCE_DIR}/include)
+target_link_libraries(test_wqueue_mpsc PRIVATE wqueue ${CMOCKA_LIBRARY})
+add_test(NAME test_wqueue_mpsc COMMAND test_wqueue_mpsc)
+
 # Platform-specific settings
 if(WIN32)
     target_compile_definitions(test_gerror PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -92,10 +116,14 @@ if(WIN32)
     target_compile_definitions(test_wtree3_advanced PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wtree3_upsert PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_error_translation PRIVATE _CRT_SECURE_NO_WARNINGS)
-    target_compile_definitions(test_wt_queue PRIVATE _CRT_SECURE_NO_WARNINGS)
-    target_compile_definitions(test_wt_queue_stress PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wtree3_stress PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wtree3_tier1 PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(test_wtree3_tier2 PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(test_wtree3_coverage PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(test_wtree3_persistence PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(test_wbuffer PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(test_wqueue PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(test_wqueue_mpsc PRIVATE _CRT_SECURE_NO_WARNINGS)
 
     # Copy cmocka DLL to test directory on Windows
     add_custom_command(TARGET test_gerror POST_BUILD
@@ -140,20 +168,6 @@ if(WIN32)
         COMMENT "Copying cmocka DLL to test directory"
     )
 
-    add_custom_command(TARGET test_wt_queue POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:cmocka>
-            $<TARGET_FILE_DIR:test_wt_queue>
-        COMMENT "Copying cmocka DLL to test directory"
-    )
-
-    add_custom_command(TARGET test_wt_queue_stress POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:cmocka>
-            $<TARGET_FILE_DIR:test_wt_queue_stress>
-        COMMENT "Copying cmocka DLL to test directory"
-    )
-
     add_custom_command(TARGET test_wtree3_stress POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:cmocka>
@@ -165,6 +179,48 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:cmocka>
             $<TARGET_FILE_DIR:test_wtree3_tier1>
+        COMMENT "Copying cmocka DLL to test directory"
+    )
+
+    add_custom_command(TARGET test_wtree3_tier2 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:cmocka>
+            $<TARGET_FILE_DIR:test_wtree3_tier2>
+        COMMENT "Copying cmocka DLL to test directory"
+    )
+
+    add_custom_command(TARGET test_wtree3_coverage POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:cmocka>
+            $<TARGET_FILE_DIR:test_wtree3_coverage>
+        COMMENT "Copying cmocka DLL to test directory"
+    )
+
+    add_custom_command(TARGET test_wtree3_persistence POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:cmocka>
+            $<TARGET_FILE_DIR:test_wtree3_persistence>
+        COMMENT "Copying cmocka DLL to test directory"
+    )
+
+    add_custom_command(TARGET test_wbuffer POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:cmocka>
+            $<TARGET_FILE_DIR:test_wbuffer>
+        COMMENT "Copying cmocka DLL to test directory"
+    )
+
+    add_custom_command(TARGET test_wqueue POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:cmocka>
+            $<TARGET_FILE_DIR:test_wqueue>
+        COMMENT "Copying cmocka DLL to test directory"
+    )
+
+    add_custom_command(TARGET test_wqueue_mpsc POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:cmocka>
+            $<TARGET_FILE_DIR:test_wqueue_mpsc>
         COMMENT "Copying cmocka DLL to test directory"
     )
 
@@ -217,18 +273,6 @@ if(WIN32)
                         $<TARGET_FILE_DIR:test_error_translation>
                     COMMENT "Copying ${DLL}"
                 )
-                add_custom_command(TARGET test_wt_queue POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        ${DLL}
-                        $<TARGET_FILE_DIR:test_wt_queue>
-                    COMMENT "Copying ${DLL}"
-                )
-                add_custom_command(TARGET test_wt_queue_stress POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        ${DLL}
-                        $<TARGET_FILE_DIR:test_wt_queue_stress>
-                    COMMENT "Copying ${DLL}"
-                )
                 add_custom_command(TARGET test_wtree3_stress POST_BUILD
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                         ${DLL}
@@ -239,6 +283,42 @@ if(WIN32)
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                         ${DLL}
                         $<TARGET_FILE_DIR:test_wtree3_tier1>
+                    COMMENT "Copying ${DLL}"
+                )
+                add_custom_command(TARGET test_wtree3_tier2 POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        ${DLL}
+                        $<TARGET_FILE_DIR:test_wtree3_tier2>
+                    COMMENT "Copying ${DLL}"
+                )
+                add_custom_command(TARGET test_wtree3_coverage POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        ${DLL}
+                        $<TARGET_FILE_DIR:test_wtree3_coverage>
+                    COMMENT "Copying ${DLL}"
+                )
+                add_custom_command(TARGET test_wtree3_persistence POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        ${DLL}
+                        $<TARGET_FILE_DIR:test_wtree3_persistence>
+                    COMMENT "Copying ${DLL}"
+                )
+                add_custom_command(TARGET test_wbuffer POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        ${DLL}
+                        $<TARGET_FILE_DIR:test_wbuffer>
+                    COMMENT "Copying ${DLL}"
+                )
+                add_custom_command(TARGET test_wqueue POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        ${DLL}
+                        $<TARGET_FILE_DIR:test_wqueue>
+                    COMMENT "Copying ${DLL}"
+                )
+                add_custom_command(TARGET test_wqueue_mpsc POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        ${DLL}
+                        $<TARGET_FILE_DIR:test_wqueue_mpsc>
                     COMMENT "Copying ${DLL}"
                 )
             endif()

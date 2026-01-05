@@ -89,6 +89,37 @@ typedef bool (*wtree3_index_key_fn)(
 typedef void (*wtree3_user_data_cleanup_fn)(void *user_data);
 
 /*
+ * User data persistence callbacks
+ *
+ * These callbacks enable user_data to be persisted and restored across DB sessions.
+ */
+typedef struct wtree3_user_data_persistence {
+    /*
+     * Serialize user_data to bytes
+     *
+     * Parameters:
+     *   user_data - The user_data to serialize
+     *   out_data  - Output: allocated data buffer (caller will free with free())
+     *   out_len   - Output: length of serialized data
+     *
+     * Returns: 0 on success, non-zero on error
+     */
+    int (*serialize)(void *user_data, void **out_data, size_t *out_len);
+
+    /*
+     * Deserialize bytes to user_data
+     *
+     * Parameters:
+     *   data - Serialized data
+     *   len  - Length of serialized data
+     *
+     * Returns: Allocated user_data (must be compatible with user_data_cleanup),
+     *          or NULL on error
+     */
+    void* (*deserialize)(const void *data, size_t len);
+} wtree3_user_data_persistence_t;
+
+/*
  * Merge callback for upsert operations
  *
  * Called when upserting a key that already exists. Allows custom merge logic.
@@ -166,6 +197,30 @@ typedef void* (*wtree3_modify_fn)(
 );
 
 /*
+ * Predicate callback for conditional operations
+ *
+ * Used to test whether a key-value pair should be deleted or collected.
+ *
+ * Parameters:
+ *   key       - Current key (zero-copy, valid during callback only)
+ *   key_len   - Key length
+ *   value     - Current value (zero-copy, valid during callback only)
+ *   value_len - Value length
+ *   user_data - User context passed to operation
+ *
+ * Returns:
+ *   true  - Predicate matches (delete/collect this entry)
+ *   false - Predicate doesn't match (skip this entry)
+ */
+typedef bool (*wtree3_predicate_fn)(
+    const void *key,
+    size_t key_len,
+    const void *value,
+    size_t value_len,
+    void *user_data
+);
+
+/*
  * Index configuration
  */
 typedef struct wtree3_index_config {
@@ -176,6 +231,7 @@ typedef struct wtree3_index_config {
     bool unique;                /* Unique constraint */
     bool sparse;                /* Skip entries where key_fn returns false */
     MDB_cmp_func *compare;      /* Custom key comparator (NULL for default) */
+    wtree3_user_data_persistence_t *persistence; /* Optional persistence callbacks */
 } wtree3_index_config_t;
 
 /* Key-Value pair for batch operations */
@@ -358,6 +414,67 @@ bool wtree3_tree_has_index(wtree3_tree_t *tree, const char *index_name);
 
 /* Get index count */
 size_t wtree3_tree_index_count(wtree3_tree_t *tree);
+
+/* ============================================================
+ * Index Persistence Operations
+ * ============================================================ */
+
+/*
+ * Save index metadata to persistent storage
+ *
+ * Stores serialized user_data and index configuration for restoration
+ * across DB sessions. Called automatically by wtree3_tree_add_index()
+ * if persistence callbacks are provided.
+ *
+ * Returns: 0 on success, error code on failure
+ */
+int wtree3_index_save_metadata(
+    wtree3_tree_t *tree,
+    const char *index_name,
+    gerror_t *error
+);
+
+/*
+ * Load index metadata and reconstruct index
+ *
+ * Deserializes user_data and restores index configuration from persistent
+ * storage. Used when reopening an existing database with indexes.
+ *
+ * Parameters:
+ *   tree        - Tree handle
+ *   index_name  - Index name to load
+ *   key_fn      - Key extraction function (must match original)
+ *   persistence - Persistence callbacks (deserialize will be called)
+ *   error       - Error output
+ *
+ * Returns: 0 on success, WTREE3_NOT_FOUND if no metadata exists
+ */
+int wtree3_index_load_metadata(
+    wtree3_tree_t *tree,
+    const char *index_name,
+    wtree3_index_key_fn key_fn,
+    wtree3_user_data_persistence_t *persistence,
+    gerror_t *error
+);
+
+/*
+ * List all persisted indexes for a tree
+ *
+ * Returns array of index names that have persisted metadata.
+ * Call wtree3_index_list_free() to free the returned array.
+ *
+ * Returns: NULL-terminated array of strings, or NULL on error
+ */
+char** wtree3_tree_list_persisted_indexes(
+    wtree3_tree_t *tree,
+    size_t *count,
+    gerror_t *error
+);
+
+/*
+ * Free array returned by wtree3_tree_list_persisted_indexes()
+ */
+void wtree3_index_list_free(char **list, size_t count);
 
 /* ============================================================
  * Data Operations (With Transaction)
@@ -653,6 +770,99 @@ int wtree3_get_many_txn(
     wtree3_tree_t *tree,
     const wtree3_kv_t *keys, size_t key_count,
     const void **values, size_t *value_lens,
+    gerror_t *error
+);
+
+/* ============================================================
+ * Tier 2 Operations - Specialized Bulk Operations
+ * ============================================================ */
+
+/*
+ * Conditional bulk delete operation
+ *
+ * Scans a range and deletes all entries that match the predicate.
+ * Useful for: expiring old data, removing by pattern, cleanup operations.
+ *
+ * Parameters:
+ *   start_key   - Start of range (NULL for beginning)
+ *   start_len   - Start key length
+ *   end_key     - End of range (NULL for end)
+ *   end_len     - End key length
+ *   predicate   - Test function (return true to delete entry)
+ *   user_data   - Context passed to predicate
+ *   deleted_out - Output: number of entries deleted (can be NULL)
+ *
+ * Returns: 0 on success, error code on failure
+ */
+int wtree3_delete_if_txn(
+    wtree3_txn_t *txn,
+    wtree3_tree_t *tree,
+    const void *start_key, size_t start_len,
+    const void *end_key, size_t end_len,
+    wtree3_predicate_fn predicate,
+    void *user_data,
+    size_t *deleted_out,
+    gerror_t *error
+);
+
+/*
+ * Collect key-value pairs from a range into arrays
+ *
+ * Scans a range and copies matching entries into output arrays.
+ * Useful for: batch export, caching, snapshot operations.
+ *
+ * Parameters:
+ *   start_key   - Start of range (NULL for beginning)
+ *   start_len   - Start key length
+ *   end_key     - End of range (NULL for end)
+ *   end_len     - End key length
+ *   predicate   - Optional filter (NULL to collect all, true to collect entry)
+ *   user_data   - Context passed to predicate
+ *   keys_out    - Output: array of collected keys (caller must free each key and array)
+ *   key_lens    - Output: array of key lengths (caller must free)
+ *   values_out  - Output: array of collected values (caller must free each value and array)
+ *   value_lens  - Output: array of value lengths (caller must free)
+ *   count_out   - Output: number of entries collected
+ *   max_count   - Maximum entries to collect (0 for unlimited)
+ *
+ * Note: All output arrays are allocated with malloc. Caller must free.
+ *
+ * Returns: 0 on success, error code on failure
+ */
+int wtree3_collect_range_txn(
+    wtree3_txn_t *txn,
+    wtree3_tree_t *tree,
+    const void *start_key, size_t start_len,
+    const void *end_key, size_t end_len,
+    wtree3_predicate_fn predicate,
+    void *user_data,
+    void ***keys_out,
+    size_t **key_lens,
+    void ***values_out,
+    size_t **value_lens,
+    size_t *count_out,
+    size_t max_count,
+    gerror_t *error
+);
+
+/*
+ * Batch existence check
+ *
+ * Checks if multiple keys exist in a single transaction.
+ * Much faster than individual exists() calls.
+ *
+ * Parameters:
+ *   keys      - Array of keys to check
+ *   key_count - Number of keys
+ *   results   - Output: array of booleans (true if key exists)
+ *
+ * Returns: 0 on success, error code on failure
+ */
+int wtree3_exists_many_txn(
+    wtree3_txn_t *txn,
+    wtree3_tree_t *tree,
+    const wtree3_kv_t *keys, size_t key_count,
+    bool *results,
     gerror_t *error
 );
 

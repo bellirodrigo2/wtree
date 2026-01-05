@@ -41,8 +41,11 @@ static int setup_db(void **state) {
     (void)state;
 
 #ifdef _WIN32
+    const char *temp = getenv("TEMP");
+    if (!temp) temp = getenv("TMP");
+    if (!temp) temp = ".";
     snprintf(test_db_path, sizeof(test_db_path), "%s\\test_wtree3_errors_%d",
-             getenv("TEMP"), getpid());
+             temp, getpid());
 #else
     snprintf(test_db_path, sizeof(test_db_path), "/tmp/test_wtree3_errors_%d", getpid());
 #endif
