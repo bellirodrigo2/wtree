@@ -60,14 +60,17 @@ static void test_init_destroy_basic(void **state) {
     assert_non_null(buf);
     assert_true(wbuffer_is_empty(buf));
     assert_false(wbuffer_is_full(buf));
+    assert_true(wbuffer_entry_size(buf) == sizeof(test_entry_t));
     wbuffer_free(buf);
 }
 static void test_init_large_capacity(void **state) {
     (void)state;
     reset_counters();
-    wbuffer_t *buf = wbuffer_create(sizeof(test_entry_t), 1000);
+    size_t n = 1000;
+    wbuffer_t *buf = wbuffer_create(sizeof(test_entry_t), n);
     assert_non_null(buf);
     assert_true(wbuffer_is_empty(buf));
+    assert_true(wbuffer_capacity(buf) == n);
     wbuffer_free(buf);
 }
 static void test_init_small_entry(void **state) {

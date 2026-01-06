@@ -120,6 +120,33 @@ typedef struct wtree3_user_data_persistence {
 } wtree3_user_data_persistence_t;
 
 /*
+ * Index loader callback function
+ *
+ * Called by wtree3_tree_open() for each persisted index found.
+ * The user must provide the key_fn and persistence callbacks needed to load the index.
+ *
+ * Parameters:
+ *   index_name - Name of the index being loaded
+ *   unique     - Whether this is a unique index (from persisted metadata)
+ *   sparse     - Whether this is a sparse index (from persisted metadata)
+ *   out_key_fn - User must set this to the key extraction function
+ *   out_persistence - User must set this to the persistence callbacks
+ *   context    - User-provided context data
+ *
+ * Returns:
+ *   0 - Load this index using the provided callbacks
+ *   Non-zero - Skip loading this index
+ */
+typedef int (*wtree3_index_loader_fn)(
+    const char *index_name,
+    bool unique,
+    bool sparse,
+    wtree3_index_key_fn *out_key_fn,
+    wtree3_user_data_persistence_t **out_persistence,
+    void *context
+);
+
+/*
  * Merge callback for upsert operations
  *
  * Called when upserting a key that already exists. Allows custom merge logic.
@@ -345,6 +372,30 @@ wtree3_tree_t* wtree3_tree_open(
     gerror_t *error
 );
 
+/*
+ * Set index loader callback for automatic loading of persisted indexes
+ *
+ * This function enables automatic loading of persisted indexes. Call this
+ * immediately after wtree3_tree_open() to auto-load indexes.
+ *
+ * Parameters:
+ *   tree           - Tree handle
+ *   loader_fn      - Callback to provide key_fn and persistence for each index
+ *   loader_context - User context passed to loader_fn
+ *   error          - Error output
+ *
+ * The loader_fn will be called for each persisted index found. The user
+ * can choose which indexes to load by providing appropriate callbacks.
+ *
+ * Returns: 0 on success, error code on failure
+ */
+int wtree3_tree_set_index_loader(
+    wtree3_tree_t *tree,
+    wtree3_index_loader_fn loader_fn,
+    void *loader_context,
+    gerror_t *error
+);
+
 /* Close tree handle (does not delete data) */
 void wtree3_tree_close(wtree3_tree_t *tree);
 
@@ -414,6 +465,27 @@ bool wtree3_tree_has_index(wtree3_tree_t *tree, const char *index_name);
 
 /* Get index count */
 size_t wtree3_tree_index_count(wtree3_tree_t *tree);
+
+/*
+ * Verify index consistency
+ *
+ * Performs integrity checks on all secondary indexes:
+ * 1. Verifies all main tree entries appear in their indexes
+ * 2. Verifies all index entries point to valid main tree entries
+ * 3. Checks for orphaned index entries
+ * 4. Validates unique constraints
+ *
+ * Returns: 0 if all indexes are consistent, WTREE3_INDEX_ERROR if inconsistencies found
+ * The error parameter will contain details about the first inconsistency detected.
+ */
+int wtree3_verify_indexes(wtree3_tree_t *tree, gerror_t *error);
+
+/*
+ * Check if a tree/DB exists without creating it
+ *
+ * Returns: 1 if exists, 0 if doesn't exist, negative error code on failure
+ */
+int wtree3_tree_exists(wtree3_db_t *db, const char *name, gerror_t *error);
 
 /* ============================================================
  * Index Persistence Operations

@@ -90,6 +90,12 @@ target_include_directories(test_wtree3_persistence PRIVATE ${cmocka_SOURCE_DIR}/
 target_link_libraries(test_wtree3_persistence PRIVATE wtree3 ${CMOCKA_LIBRARY})
 add_test(NAME test_wtree3_persistence COMMAND test_wtree3_persistence)
 
+# Test for wtree3 critical bugs (Phase 1 bug fixes)
+add_executable(test_wtree3_bugs test_wtree3_bugs.c)
+target_include_directories(test_wtree3_bugs PRIVATE ${cmocka_SOURCE_DIR}/include)
+target_link_libraries(test_wtree3_bugs PRIVATE wtree3 ${CMOCKA_LIBRARY})
+add_test(NAME test_wtree3_bugs COMMAND test_wtree3_bugs)
+
 # Test for wbuffer module
 add_executable(test_wbuffer test_wbuffer.c)
 target_include_directories(test_wbuffer PRIVATE ${cmocka_SOURCE_DIR}/include)
@@ -121,6 +127,7 @@ if(WIN32)
     target_compile_definitions(test_wtree3_tier2 PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wtree3_coverage PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wtree3_persistence PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(test_wtree3_bugs PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wbuffer PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wqueue PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wqueue_mpsc PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -200,6 +207,13 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:cmocka>
             $<TARGET_FILE_DIR:test_wtree3_persistence>
+        COMMENT "Copying cmocka DLL to test directory"
+    )
+
+    add_custom_command(TARGET test_wtree3_bugs POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:cmocka>
+            $<TARGET_FILE_DIR:test_wtree3_bugs>
         COMMENT "Copying cmocka DLL to test directory"
     )
 
@@ -301,6 +315,12 @@ if(WIN32)
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                         ${DLL}
                         $<TARGET_FILE_DIR:test_wtree3_persistence>
+                    COMMENT "Copying ${DLL}"
+                )
+                add_custom_command(TARGET test_wtree3_bugs POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        ${DLL}
+                        $<TARGET_FILE_DIR:test_wtree3_bugs>
                     COMMENT "Copying ${DLL}"
                 )
                 add_custom_command(TARGET test_wbuffer POST_BUILD

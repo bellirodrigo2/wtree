@@ -103,10 +103,16 @@ else()
     target_link_libraries(wqueue PUBLIC pthread)
 endif()
 
-# Build wtree3 library
+# Build wtree3 library - modular implementation
 add_library(wtree3 STATIC
     src/gerror.c
-    src/wtree3.c
+    src/wtree3_core.c
+    src/wtree3_tree.c
+    src/wtree3_index.c
+    src/wtree3_index_persist.c
+    src/wtree3_crud.c
+    src/wtree3_iterator.c
+    src/wtree3_scan.c
 )
 
 target_include_directories(wtree3 PUBLIC
