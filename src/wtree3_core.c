@@ -69,6 +69,9 @@ wtree3_db_t* wtree3_db_open(const char *path, size_t mapsize,
         return NULL;
     }
 
+    /* Initialize extractor registry */
+    memset(db->extractors, 0, sizeof(db->extractors));
+
     int rc = mdb_env_create(&db->env);
     if (rc != 0) {
         set_error(error, WTREE3_LIB, WTREE3_ERROR,
@@ -120,6 +123,17 @@ void wtree3_db_close(wtree3_db_t *db) {
     if (!db) return;
     if (db->env) mdb_env_close(db->env);
     free(db->path);
+
+    /* Free extractor registry */
+    for (size_t i = 0; i < WTREE3_EXTRACTOR_REGISTRY_SIZE; i++) {
+        extractor_entry_t *entry = db->extractors[i];
+        while (entry) {
+            extractor_entry_t *next = entry->next;
+            free(entry);
+            entry = next;
+        }
+    }
+
     free(db);
 }
 
@@ -273,4 +287,71 @@ bool wtree3_error_recoverable(int error_code) {
     return error_code == WTREE3_MAP_FULL ||
            error_code == WTREE3_TXN_FULL ||
            error_code == MDB_MAP_RESIZED;
+}
+
+/* ============================================================
+ * Extractor Registry Operations
+ * ============================================================ */
+
+/* Simple hash function for extractor_id */
+static size_t hash_extractor_id(uint64_t id) {
+    /* FNV-1a hash */
+    uint64_t hash = 14695981039346656037ULL;
+    for (int i = 0; i < 8; i++) {
+        hash ^= (id & 0xFF);
+        hash *= 1099511628211ULL;
+        id >>= 8;
+    }
+    return hash % WTREE3_EXTRACTOR_REGISTRY_SIZE;
+}
+
+int wtree3_db_register_key_extractor(wtree3_db_t *db, uint64_t extractor_id,
+                                       wtree3_index_key_fn key_fn, gerror_t *error) {
+    if (!db || !key_fn) {
+        set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Invalid parameters");
+        return WTREE3_EINVAL;
+    }
+
+    size_t slot = hash_extractor_id(extractor_id);
+
+    /* Check if already registered */
+    extractor_entry_t *entry = db->extractors[slot];
+    while (entry) {
+        if (entry->extractor_id == extractor_id) {
+            /* Update existing entry */
+            entry->key_fn = key_fn;
+            return WTREE3_OK;
+        }
+        entry = entry->next;
+    }
+
+    /* Add new entry */
+    extractor_entry_t *new_entry = malloc(sizeof(extractor_entry_t));
+    if (!new_entry) {
+        set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to allocate extractor entry");
+        return WTREE3_ENOMEM;
+    }
+
+    new_entry->extractor_id = extractor_id;
+    new_entry->key_fn = key_fn;
+    new_entry->next = db->extractors[slot];
+    db->extractors[slot] = new_entry;
+
+    return WTREE3_OK;
+}
+
+wtree3_index_key_fn find_extractor(wtree3_db_t *db, uint64_t extractor_id) {
+    if (!db) return NULL;
+
+    size_t slot = hash_extractor_id(extractor_id);
+    extractor_entry_t *entry = db->extractors[slot];
+
+    while (entry) {
+        if (entry->extractor_id == extractor_id) {
+            return entry->key_fn;
+        }
+        entry = entry->next;
+    }
+
+    return NULL;
 }

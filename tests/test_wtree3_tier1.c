@@ -32,6 +32,9 @@
 
 #include "wtree3.h"
 
+/* Extractor ID for test extractors */
+#define TEST_EXTRACTOR_ID WTREE3_EXTRACTOR(1, 1)
+
 /* Test database path */
 static char test_db_path[256];
 static wtree3_db_t *test_db = NULL;

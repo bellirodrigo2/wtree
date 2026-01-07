@@ -12,133 +12,33 @@
 /* Forward declarations from wtree3_index_persist.c */
 extern char** wtree3_tree_list_persisted_indexes(wtree3_tree_t *tree, size_t *count, gerror_t *error);
 extern void wtree3_index_list_free(char **list, size_t count);
-extern int wtree3_index_load_metadata(wtree3_tree_t *tree, const char *index_name,
-                                      wtree3_index_key_fn key_fn,
-                                      wtree3_user_data_persistence_t *persistence,
-                                      gerror_t *error);
 
 /* ============================================================
  * Internal Helpers
  * ============================================================ */
 
 /*
- * Static helper: Read just the flags from index metadata (without deserializing user_data)
+ * Auto-load all persisted indexes for a tree
+ * Uses registered extractors from db->extractors registry
  */
-static int read_index_flags(
-    wtree3_tree_t *tree,
-    const char *index_name,
-    bool *out_unique,
-    bool *out_sparse,
-    gerror_t *error
-) {
-    MDB_txn *txn;
-    int rc = mdb_txn_begin(tree->db->env, NULL, MDB_RDONLY, &txn);
-    if (rc != 0) {
-        return translate_mdb_error(rc, error);
-    }
+static void auto_load_indexes(wtree3_tree_t *tree) {
+    if (!tree) return;
 
-    MDB_dbi meta_dbi;
-    rc = get_metadata_dbi(tree->db, txn, &meta_dbi, error);
-    if (rc != 0) {
-        mdb_txn_abort(txn);
-        return rc;
-    }
-
-    char *meta_key = build_metadata_key(tree->name, index_name);
-    if (!meta_key) {
-        mdb_txn_abort(txn);
-        set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to build metadata key");
-        return WTREE3_ENOMEM;
-    }
-
-    MDB_val key = {.mv_size = strlen(meta_key), .mv_data = meta_key};
-    MDB_val val;
-
-    rc = mdb_get(txn, meta_dbi, &key, &val);
-    free(meta_key);
-
-    if (rc != 0) {
-        mdb_txn_abort(txn);
-        if (rc == MDB_NOTFOUND) {
-            return translate_mdb_error(rc, error);
-        }
-        return translate_mdb_error(rc, error);
-    }
-
-    // Parse just the flags byte (offset 4 in metadata)
-    if (val.mv_size < 5) {
-        mdb_txn_abort(txn);
-        set_error(error, WTREE3_LIB, WTREE3_ERROR, "Invalid metadata format");
-        return WTREE3_ERROR;
-    }
-
-    uint8_t *meta_data = (uint8_t*)val.mv_data;
-    uint8_t flags = meta_data[4];
-
-    *out_unique = (flags & 0x01) != 0;
-    *out_sparse = (flags & 0x02) != 0;
-
-    mdb_txn_abort(txn);
-    return WTREE3_OK;
-}
-
-/*
- * Static helper: Load all persisted indexes for a tree using user callback
- */
-static int load_persisted_indexes(
-    wtree3_tree_t *tree,
-    wtree3_index_loader_fn loader_fn,
-    void *loader_context,
-    gerror_t *error
-) {
-    if (!tree || !loader_fn) return WTREE3_OK;
-
-    // Get list of all persisted indexes
+    gerror_t error = {0};
     size_t index_count = 0;
-    char **index_names = wtree3_tree_list_persisted_indexes(tree, &index_count, error);
+    char **index_names = wtree3_tree_list_persisted_indexes(tree, &index_count, &error);
 
     if (!index_names || index_count == 0) {
-        return WTREE3_OK;  // No indexes to load, not an error
+        return;  // No indexes to load
     }
 
-    int loaded_count = 0;
-    gerror_t temp_error = {0};
-
-    // For each persisted index
+    // Load each index
     for (size_t i = 0; i < index_count; i++) {
-        const char *index_name = index_names[i];
-
-        // Read metadata to get flags (without full deserialization)
-        bool unique = false;
-        bool sparse = false;
-        int rc = read_index_flags(tree, index_name, &unique, &sparse, &temp_error);
-
-        if (rc != 0) {
-            // Can't read metadata, skip this index
-            continue;
-        }
-
-        // Call user's loader callback
-        wtree3_index_key_fn key_fn = NULL;
-        wtree3_user_data_persistence_t *persistence = NULL;
-
-        rc = loader_fn(index_name, unique, sparse, &key_fn, &persistence, loader_context);
-
-        if (rc == 0 && key_fn && persistence) {
-            // User wants to load this index
-            rc = wtree3_index_load_metadata(tree, index_name, key_fn, persistence, &temp_error);
-            if (rc == 0) {
-                loaded_count++;
-            }
-            // Note: Errors loading individual indexes don't fail the whole operation
-        }
-        // If rc != 0 or callbacks are NULL, user chose to skip this index
+        load_index_metadata(tree, index_names[i], &error);
+        /* load_index_metadata handles missing extractors gracefully (prints warning) */
     }
 
     wtree3_index_list_free(index_names, index_count);
-
-    // Success even if no indexes were loaded (user might have skipped all)
-    return WTREE3_OK;
 }
 
 /* ============================================================
@@ -198,25 +98,10 @@ wtree3_tree_t* wtree3_tree_open(wtree3_db_t *db, const char *name,
         return NULL;
     }
 
+    /* Auto-load persisted indexes */
+    auto_load_indexes(tree);
+
     return tree;
-}
-
-int wtree3_tree_set_index_loader(wtree3_tree_t *tree,
-                                   wtree3_index_loader_fn loader_fn,
-                                   void *loader_context,
-                                   gerror_t *error) {
-    if (!tree) {
-        set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Tree cannot be NULL");
-        return WTREE3_EINVAL;
-    }
-
-    if (!loader_fn) {
-        set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Loader function cannot be NULL");
-        return WTREE3_EINVAL;
-    }
-
-    // Call the loader to auto-load all persisted indexes
-    return load_persisted_indexes(tree, loader_fn, loader_context, error);
 }
 
 void wtree3_tree_close(wtree3_tree_t *tree) {
@@ -224,10 +109,7 @@ void wtree3_tree_close(wtree3_tree_t *tree) {
 
     /* Free all indexes */
     for (size_t i = 0; i < tree->index_count; i++) {
-        /* Call user_data cleanup if provided */
-        if (tree->indexes[i].user_data_cleanup && tree->indexes[i].user_data) {
-            tree->indexes[i].user_data_cleanup(tree->indexes[i].user_data);
-        }
+        free(tree->indexes[i].user_data);
         free(tree->indexes[i].name);
         free(tree->indexes[i].tree_name);
     }

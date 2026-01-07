@@ -30,6 +30,9 @@
 
 #include "wtree3.h"
 
+/* Extractor ID for test extractors */
+#define TEST_EXTRACTOR_ID WTREE3_EXTRACTOR(1, 1)
+
 // Test database path
 static char test_db_path[256];
 static wtree3_db_t *test_db = NULL;
@@ -41,6 +44,12 @@ typedef struct {
     char email[64];
     int age;
 } user_t;
+
+// Forward declarations of key extractors
+static bool email_key_fn(const void *value, size_t value_len, void *user_data,
+                          void **key_out, size_t *key_len_out);
+static bool age_key_fn(const void *value, size_t value_len, void *user_data,
+                        void **key_out, size_t *key_len_out);
 
 // Setup function to create test database
 static int setup_db(void **state) {
@@ -61,6 +70,21 @@ static int setup_db(void **state) {
     test_db = wtree3_db_open(test_db_path, 64 * 1024 * 1024, 32, 0, &error);
     if (!test_db) {
         fprintf(stderr, "Failed to create test database: %s\n", error.message);
+        return -1;
+    }
+
+    /* Register key extractors */
+    int rc = wtree3_db_register_key_extractor(test_db, TEST_EXTRACTOR_ID, email_key_fn, &error);
+    if (rc != WTREE3_OK) {
+        fprintf(stderr, "Failed to register email extractor: %s\n", error.message);
+        wtree3_db_close(test_db);
+        return -1;
+    }
+
+    rc = wtree3_db_register_key_extractor(test_db, WTREE3_EXTRACTOR(1, 2), age_key_fn, &error);
+    if (rc != WTREE3_OK) {
+        fprintf(stderr, "Failed to register age extractor: %s\n", error.message);
+        wtree3_db_close(test_db);
         return -1;
     }
 
@@ -163,13 +187,11 @@ static void test_bug2_unique_index_allows_duplicates(void **state) {
     // Create a unique index on email
     wtree3_index_config_t config = {
         .name = "email_idx",
-        .key_fn = email_key_fn,
+        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = NULL,
-        .user_data_cleanup = NULL,
         .unique = true,
         .sparse = false,
         .compare = NULL,
-        .persistence = NULL
     };
 
     int rc = wtree3_tree_add_index(tree, &config, &error);
@@ -245,13 +267,11 @@ static void test_bug4_iterator_delete_breaks_indexes(void **state) {
     // Create index on email
     wtree3_index_config_t config = {
         .name = "email_idx",
-        .key_fn = email_key_fn,
+        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = NULL,
-        .user_data_cleanup = NULL,
         .unique = false,
         .sparse = false,
         .compare = NULL,
-        .persistence = NULL
     };
 
     int rc = wtree3_tree_add_index(tree, &config, &error);
@@ -473,13 +493,11 @@ static void test_bug1_index_inconsistency_on_failure(void **state) {
     // Create index on email
     wtree3_index_config_t config = {
         .name = "email_idx",
-        .key_fn = email_key_fn,
+        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = NULL,
-        .user_data_cleanup = NULL,
         .unique = false,
         .sparse = false,
         .compare = NULL,
-        .persistence = NULL
     };
 
     int rc = wtree3_tree_add_index(tree, &config, &error);
@@ -557,13 +575,11 @@ static void test_bug3_key_fn_memory_leak_prevention(void **state) {
     // Create sparse index on age (only indexes users >= 18)
     wtree3_index_config_t config = {
         .name = "age_idx",
-        .key_fn = age_key_fn,
+        .key_extractor_id = WTREE3_EXTRACTOR(1, 2),  /* age_key_fn */
         .user_data = NULL,
-        .user_data_cleanup = NULL,
         .unique = false,
         .sparse = true,
         .compare = NULL,
-        .persistence = NULL
     };
 
     int rc = wtree3_tree_add_index(tree, &config, &error);
@@ -623,13 +639,11 @@ static void test_index_consistency_after_delete(void **state) {
     // Create index on email
     wtree3_index_config_t config = {
         .name = "email_idx",
-        .key_fn = email_key_fn,
+        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = NULL,
-        .user_data_cleanup = NULL,
         .unique = false,
         .sparse = false,
         .compare = NULL,
-        .persistence = NULL
     };
 
     int rc = wtree3_tree_add_index(tree, &config, &error);
@@ -691,13 +705,11 @@ static void test_bug7_verify_indexes(void **state) {
     // Create index on email
     wtree3_index_config_t config = {
         .name = "email_idx",
-        .key_fn = email_key_fn,
+        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = NULL,
-        .user_data_cleanup = NULL,
         .unique = false,
         .sparse = false,
         .compare = NULL,
-        .persistence = NULL
     };
 
     int rc = wtree3_tree_add_index(tree, &config, &error);
@@ -739,13 +751,11 @@ static void test_bug6_tree_delete_cleanup(void **state) {
     // Create two indexes
     wtree3_index_config_t email_config = {
         .name = "email_idx",
-        .key_fn = email_key_fn,
+        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = NULL,
-        .user_data_cleanup = NULL,
         .unique = false,
         .sparse = false,
         .compare = NULL,
-        .persistence = NULL
     };
 
     int rc = wtree3_tree_add_index(tree, &email_config, &error);
@@ -753,13 +763,11 @@ static void test_bug6_tree_delete_cleanup(void **state) {
 
     wtree3_index_config_t age_config = {
         .name = "age_idx",
-        .key_fn = age_key_fn,
+        .key_extractor_id = WTREE3_EXTRACTOR(1, 2),  /* age_key_fn */
         .user_data = NULL,
-        .user_data_cleanup = NULL,
         .unique = false,
         .sparse = true,
         .compare = NULL,
-        .persistence = NULL
     };
 
     rc = wtree3_tree_add_index(tree, &age_config, &error);

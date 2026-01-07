@@ -84,67 +84,11 @@ typedef bool (*wtree3_index_key_fn)(
 );
 
 /*
- * Cleanup callback for user_data (called when index is dropped or tree closed)
+ * Helper macro to build extractor IDs
+ * Upper 32 bits: version, Lower 32 bits: type
  */
-typedef void (*wtree3_user_data_cleanup_fn)(void *user_data);
-
-/*
- * User data persistence callbacks
- *
- * These callbacks enable user_data to be persisted and restored across DB sessions.
- */
-typedef struct wtree3_user_data_persistence {
-    /*
-     * Serialize user_data to bytes
-     *
-     * Parameters:
-     *   user_data - The user_data to serialize
-     *   out_data  - Output: allocated data buffer (caller will free with free())
-     *   out_len   - Output: length of serialized data
-     *
-     * Returns: 0 on success, non-zero on error
-     */
-    int (*serialize)(void *user_data, void **out_data, size_t *out_len);
-
-    /*
-     * Deserialize bytes to user_data
-     *
-     * Parameters:
-     *   data - Serialized data
-     *   len  - Length of serialized data
-     *
-     * Returns: Allocated user_data (must be compatible with user_data_cleanup),
-     *          or NULL on error
-     */
-    void* (*deserialize)(const void *data, size_t len);
-} wtree3_user_data_persistence_t;
-
-/*
- * Index loader callback function
- *
- * Called by wtree3_tree_open() for each persisted index found.
- * The user must provide the key_fn and persistence callbacks needed to load the index.
- *
- * Parameters:
- *   index_name - Name of the index being loaded
- *   unique     - Whether this is a unique index (from persisted metadata)
- *   sparse     - Whether this is a sparse index (from persisted metadata)
- *   out_key_fn - User must set this to the key extraction function
- *   out_persistence - User must set this to the persistence callbacks
- *   context    - User-provided context data
- *
- * Returns:
- *   0 - Load this index using the provided callbacks
- *   Non-zero - Skip loading this index
- */
-typedef int (*wtree3_index_loader_fn)(
-    const char *index_name,
-    bool unique,
-    bool sparse,
-    wtree3_index_key_fn *out_key_fn,
-    wtree3_user_data_persistence_t **out_persistence,
-    void *context
-);
+#define WTREE3_EXTRACTOR(version, type) \
+    (((uint64_t)(version) << 32) | (uint32_t)(type))
 
 /*
  * Merge callback for upsert operations
@@ -252,13 +196,12 @@ typedef bool (*wtree3_predicate_fn)(
  */
 typedef struct wtree3_index_config {
     const char *name;           /* Index name (e.g., "email_1") */
-    wtree3_index_key_fn key_fn; /* Key extraction callback */
-    void *user_data;            /* User context for callback */
-    wtree3_user_data_cleanup_fn user_data_cleanup; /* Cleanup callback for user_data */
+    uint64_t key_extractor_id;  /* Extractor ID (registered with wtree3_db_register_key_extractor) */
+    const void *user_data;      /* User context for callback (persisted as-is) */
+    size_t user_data_len;       /* Length of user_data in bytes */
     bool unique;                /* Unique constraint */
     bool sparse;                /* Skip entries where key_fn returns false */
     MDB_cmp_func *compare;      /* Custom key comparator (NULL for default) */
-    wtree3_user_data_persistence_t *persistence; /* Optional persistence callbacks */
 } wtree3_index_config_t;
 
 /* Key-Value pair for batch operations */
@@ -311,6 +254,27 @@ int wtree3_db_stats(wtree3_db_t *db, MDB_stat *stat, gerror_t *error);
 /* Get underlying LMDB environment (for advanced use) */
 MDB_env* wtree3_db_get_env(wtree3_db_t *db);
 
+/*
+ * Register a key extractor function
+ *
+ * Extractor functions must be registered before creating or opening trees with indexes.
+ * The same extractors must be registered on every database open.
+ *
+ * Parameters:
+ *   db           - Database handle
+ *   extractor_id - Unique ID for this extractor (use WTREE3_EXTRACTOR macro)
+ *   key_fn       - Key extraction function
+ *   error        - Error output
+ *
+ * Returns: 0 on success, error code on failure
+ */
+int wtree3_db_register_key_extractor(
+    wtree3_db_t *db,
+    uint64_t extractor_id,
+    wtree3_index_key_fn key_fn,
+    gerror_t *error
+);
+
 /* ============================================================
  * Transaction Operations
  * ============================================================ */
@@ -362,6 +326,10 @@ wtree3_db_t* wtree3_txn_get_db(wtree3_txn_t *txn);
  *   entry_count - Initial entry count (0 for new, persisted value for existing)
  *   error       - Error output
  *
+ * Note: This function automatically loads all persisted indexes for the tree
+ *       using extractors registered via wtree3_db_register_key_extractor().
+ *       Indexes with unregistered extractors will be skipped with a warning.
+ *
  * Returns: Tree handle or NULL on error
  */
 wtree3_tree_t* wtree3_tree_open(
@@ -369,30 +337,6 @@ wtree3_tree_t* wtree3_tree_open(
     const char *name,
     unsigned int flags,
     int64_t entry_count,
-    gerror_t *error
-);
-
-/*
- * Set index loader callback for automatic loading of persisted indexes
- *
- * This function enables automatic loading of persisted indexes. Call this
- * immediately after wtree3_tree_open() to auto-load indexes.
- *
- * Parameters:
- *   tree           - Tree handle
- *   loader_fn      - Callback to provide key_fn and persistence for each index
- *   loader_context - User context passed to loader_fn
- *   error          - Error output
- *
- * The loader_fn will be called for each persisted index found. The user
- * can choose which indexes to load by providing appropriate callbacks.
- *
- * Returns: 0 on success, error code on failure
- */
-int wtree3_tree_set_index_loader(
-    wtree3_tree_t *tree,
-    wtree3_index_loader_fn loader_fn,
-    void *loader_context,
     gerror_t *error
 );
 
@@ -488,65 +432,29 @@ int wtree3_verify_indexes(wtree3_tree_t *tree, gerror_t *error);
 int wtree3_tree_exists(wtree3_db_t *db, const char *name, gerror_t *error);
 
 /* ============================================================
- * Index Persistence Operations
+ * Index Introspection Operations
  * ============================================================ */
 
 /*
- * Save index metadata to persistent storage
+ * Get extractor ID for a persisted index
  *
- * Stores serialized user_data and index configuration for restoration
- * across DB sessions. Called automatically by wtree3_tree_add_index()
- * if persistence callbacks are provided.
- *
- * Returns: 0 on success, error code on failure
- */
-int wtree3_index_save_metadata(
-    wtree3_tree_t *tree,
-    const char *index_name,
-    gerror_t *error
-);
-
-/*
- * Load index metadata and reconstruct index
- *
- * Deserializes user_data and restores index configuration from persistent
- * storage. Used when reopening an existing database with indexes.
+ * Reads the extractor ID from index metadata without loading the full index.
+ * Useful for introspection and debugging.
  *
  * Parameters:
- *   tree        - Tree handle
- *   index_name  - Index name to load
- *   key_fn      - Key extraction function (must match original)
- *   persistence - Persistence callbacks (deserialize will be called)
- *   error       - Error output
+ *   tree              - Tree handle
+ *   index_name        - Index name
+ *   out_extractor_id  - Output: extractor ID from metadata
+ *   error             - Error output
  *
  * Returns: 0 on success, WTREE3_NOT_FOUND if no metadata exists
  */
-int wtree3_index_load_metadata(
+int wtree3_index_get_extractor_id(
     wtree3_tree_t *tree,
     const char *index_name,
-    wtree3_index_key_fn key_fn,
-    wtree3_user_data_persistence_t *persistence,
+    uint64_t *out_extractor_id,
     gerror_t *error
 );
-
-/*
- * List all persisted indexes for a tree
- *
- * Returns array of index names that have persisted metadata.
- * Call wtree3_index_list_free() to free the returned array.
- *
- * Returns: NULL-terminated array of strings, or NULL on error
- */
-char** wtree3_tree_list_persisted_indexes(
-    wtree3_tree_t *tree,
-    size_t *count,
-    gerror_t *error
-);
-
-/*
- * Free array returned by wtree3_tree_list_persisted_indexes()
- */
-void wtree3_index_list_free(char **list, size_t count);
 
 /* ============================================================
  * Data Operations (With Transaction)

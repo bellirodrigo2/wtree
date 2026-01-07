@@ -29,6 +29,9 @@
 
 #include "wtree3.h"
 
+/* Extractor ID for test extractors */
+#define TEST_EXTRACTOR_ID WTREE3_EXTRACTOR(1, 1)
+
 /* Test database path */
 static char test_db_path[256];
 static wtree3_db_t *test_db = NULL;
@@ -300,7 +303,7 @@ static void test_add_index_null_tree(void **state) {
 
     wtree3_index_config_t config = {
         .name = "test_idx",
-        .key_fn = NULL,
+        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = NULL,
         .unique = false,
         .sparse = false,

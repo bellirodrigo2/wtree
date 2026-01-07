@@ -2,20 +2,23 @@
  * wtree3_index_persist.c - Index Persistence and Restoration
  *
  * This module handles index metadata serialization and restoration:
- * - Index metadata save/load (save_metadata, load_metadata)
- * - Index listing (list_persisted_indexes, index_list_free)
- * - Index loader support (set_index_loader)
+ * - Save index metadata (extractor_id, flags, user_data)
+ * - Load index metadata and auto-attach indexes
+ * - Index introspection (get_extractor_id)
+ *
+ * Metadata format (16 bytes + user_data):
+ *   [extractor_id:8][flags:4][user_data_len:4][user_data:N]
  */
 
 #include "wtree3_internal.h"
 
 /* ============================================================
- * Index Persistence Operations
+ * Metadata Save/Load Operations
  * ============================================================ */
 
-int wtree3_index_save_metadata(wtree3_tree_t *tree,
-                                 const char *index_name,
-                                 gerror_t *error) {
+int save_index_metadata(wtree3_tree_t *tree,
+                         const char *index_name,
+                         gerror_t *error) {
     if (!tree || !index_name) {
         set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Invalid parameters");
         return WTREE3_EINVAL;
@@ -28,55 +31,38 @@ int wtree3_index_save_metadata(wtree3_tree_t *tree,
         return WTREE3_NOT_FOUND;
     }
 
-    if (!idx->has_persistence) {
-        set_error(error, WTREE3_LIB, WTREE3_EINVAL,
-                 "Index '%s' has no persistence configuration", index_name);
-        return WTREE3_EINVAL;
-    }
-
-    /* Serialize user_data */
-    void *serialized_data = NULL;
-    size_t serialized_len = 0;
-    int rc = idx->persistence.serialize(idx->user_data, &serialized_data, &serialized_len);
-    if (rc != 0 || !serialized_data) {
-        set_error(error, WTREE3_LIB, WTREE3_ERROR,
-                 "Failed to serialize user_data for index '%s'", index_name);
-        return WTREE3_ERROR;
-    }
-
     /* Build metadata value:
-     * Format: [version:4][flags:1][user_data_len:4][user_data:N]
-     * flags byte: bit 0 = unique, bit 1 = sparse
+     * Format: [extractor_id:8][flags:4][user_data_len:4][user_data:N]
      */
-    size_t meta_len = 4 + 1 + 4 + serialized_len;
+    size_t meta_len = 8 + 4 + 4 + idx->user_data_len;
     uint8_t *meta_value = malloc(meta_len);
     if (!meta_value) {
-        free(serialized_data);
         set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to allocate metadata");
         return WTREE3_ENOMEM;
     }
 
-    /* Write version (4 bytes, little-endian) */
-    uint32_t version = WTREE3_META_VERSION;
-    memcpy(meta_value, &version, 4);
+    /* Write extractor_id (8 bytes, little-endian) */
+    uint64_t extractor_id = idx->extractor_id;
+    memcpy(meta_value, &extractor_id, 8);
 
-    /* Write flags (1 byte) */
-    uint8_t flags = 0;
+    /* Write flags (4 bytes) */
+    uint32_t flags = 0;
     if (idx->unique) flags |= 0x01;
     if (idx->sparse) flags |= 0x02;
-    meta_value[4] = flags;
+    memcpy(meta_value + 8, &flags, 4);
 
     /* Write user_data length (4 bytes) */
-    uint32_t ud_len = (uint32_t)serialized_len;
-    memcpy(meta_value + 5, &ud_len, 4);
+    uint32_t ud_len = (uint32_t)idx->user_data_len;
+    memcpy(meta_value + 12, &ud_len, 4);
 
     /* Write user_data */
-    memcpy(meta_value + 9, serialized_data, serialized_len);
-    free(serialized_data);
+    if (idx->user_data && idx->user_data_len > 0) {
+        memcpy(meta_value + 16, idx->user_data, idx->user_data_len);
+    }
 
     /* Store in metadata DBI */
     MDB_txn *txn;
-    rc = mdb_txn_begin(tree->db->env, NULL, 0, &txn);
+    int rc = mdb_txn_begin(tree->db->env, NULL, 0, &txn);
     if (rc != 0) {
         free(meta_value);
         return translate_mdb_error(rc, error);
@@ -119,21 +105,20 @@ int wtree3_index_save_metadata(wtree3_tree_t *tree,
     return WTREE3_OK;
 }
 
-int wtree3_index_load_metadata(wtree3_tree_t *tree,
-                                 const char *index_name,
-                                 wtree3_index_key_fn key_fn,
-                                 wtree3_user_data_persistence_t *persistence,
-                                 gerror_t *error) {
-    if (!tree || !index_name || !key_fn || !persistence || !persistence->deserialize) {
+/*
+ * Load index metadata and attach to tree
+ * Called internally by wtree3_tree_open() for auto-loading
+ */
+int load_index_metadata(wtree3_tree_t *tree, const char *index_name, gerror_t *error) {
+    if (!tree || !index_name) {
         set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Invalid parameters");
         return WTREE3_EINVAL;
     }
 
     /* Check if index already loaded */
     if (find_index(tree, index_name)) {
-        set_error(error, WTREE3_LIB, WTREE3_KEY_EXISTS,
-                 "Index '%s' already loaded", index_name);
-        return WTREE3_KEY_EXISTS;
+        /* Already loaded, skip */
+        return WTREE3_OK;
     }
 
     /* Read metadata */
@@ -174,56 +159,66 @@ int wtree3_index_load_metadata(wtree3_tree_t *tree,
     }
 
     /* Parse metadata */
-    if (val.mv_size < 9) {
+    if (val.mv_size < 16) {
         mdb_txn_abort(txn);
         set_error(error, WTREE3_LIB, WTREE3_ERROR, "Invalid metadata format");
         return WTREE3_ERROR;
     }
 
     uint8_t *meta_data = (uint8_t*)val.mv_data;
-    uint32_t version;
-    memcpy(&version, meta_data, 4);
 
-    if (version != WTREE3_META_VERSION) {
-        mdb_txn_abort(txn);
-        set_error(error, WTREE3_LIB, WTREE3_ERROR,
-                 "Metadata version mismatch (expected %d, got %d)",
-                 WTREE3_META_VERSION, version);
-        return WTREE3_ERROR;
-    }
+    uint64_t extractor_id;
+    memcpy(&extractor_id, meta_data, 8);
 
-    uint8_t flags = meta_data[4];
+    uint32_t flags;
+    memcpy(&flags, meta_data + 8, 4);
     bool unique = (flags & 0x01) != 0;
     bool sparse = (flags & 0x02) != 0;
 
     uint32_t ud_len;
-    memcpy(&ud_len, meta_data + 5, 4);
+    memcpy(&ud_len, meta_data + 12, 4);
 
-    if (val.mv_size < 9 + ud_len) {
+    if (val.mv_size < 16 + ud_len) {
         mdb_txn_abort(txn);
         set_error(error, WTREE3_LIB, WTREE3_ERROR, "Invalid metadata format");
         return WTREE3_ERROR;
     }
 
-    /* Deserialize user_data */
-    void *user_data = persistence->deserialize(meta_data + 9, ud_len);
-    mdb_txn_abort(txn);
-
-    if (!user_data) {
-        set_error(error, WTREE3_LIB, WTREE3_ERROR,
-                 "Failed to deserialize user_data for index '%s'", index_name);
-        return WTREE3_ERROR;
+    /* Look up extractor function */
+    wtree3_index_key_fn key_fn = find_extractor(tree->db, extractor_id);
+    if (!key_fn) {
+        mdb_txn_abort(txn);
+        /* Extractor not registered - log warning and skip */
+        fprintf(stderr, "Warning: Skipping index '%s' - extractor 0x%016llx not registered\n",
+                index_name, (unsigned long long)extractor_id);
+        return WTREE3_OK;  /* Not an error - just skip */
     }
+
+    /* Copy user_data */
+    void *user_data = NULL;
+    if (ud_len > 0) {
+        user_data = malloc(ud_len);
+        if (!user_data) {
+            mdb_txn_abort(txn);
+            set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to allocate user_data");
+            return WTREE3_ENOMEM;
+        }
+        memcpy(user_data, meta_data + 16, ud_len);
+    }
+
+    mdb_txn_abort(txn);  /* Done reading */
 
     /* Open existing index DBI */
     char *idx_tree_name = build_index_tree_name(tree->name, index_name);
     if (!idx_tree_name) {
+        free(user_data);
         set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to allocate tree name");
         return WTREE3_ENOMEM;
     }
 
     rc = mdb_txn_begin(tree->db->env, NULL, 0, &txn);
     if (rc != 0) {
+        free(user_data);
         free(idx_tree_name);
         return translate_mdb_error(rc, error);
     }
@@ -232,12 +227,14 @@ int wtree3_index_load_metadata(wtree3_tree_t *tree,
     rc = mdb_dbi_open(txn, idx_tree_name, MDB_DUPSORT, &idx_dbi);
     if (rc != 0) {
         mdb_txn_abort(txn);
+        free(user_data);
         free(idx_tree_name);
         return translate_mdb_error(rc, error);
     }
 
     rc = mdb_txn_commit(txn);
     if (rc != 0) {
+        free(user_data);
         free(idx_tree_name);
         return translate_mdb_error(rc, error);
     }
@@ -248,6 +245,7 @@ int wtree3_index_load_metadata(wtree3_tree_t *tree,
         wtree3_index_t *new_indexes = realloc(tree->indexes,
                                                new_capacity * sizeof(wtree3_index_t));
         if (!new_indexes) {
+            free(user_data);
             free(idx_tree_name);
             set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to expand index array");
             return WTREE3_ENOMEM;
@@ -261,16 +259,16 @@ int wtree3_index_load_metadata(wtree3_tree_t *tree,
     idx->name = strdup(index_name);
     idx->tree_name = idx_tree_name;
     idx->dbi = idx_dbi;
+    idx->extractor_id = extractor_id;
     idx->key_fn = key_fn;
     idx->user_data = user_data;
-    idx->user_data_cleanup = NULL;
+    idx->user_data_len = ud_len;
     idx->unique = unique;
     idx->sparse = sparse;
-    idx->compare = NULL;
-    idx->persistence = *persistence;
-    idx->has_persistence = true;
+    idx->compare = NULL;  /* Not persisted */
 
     if (!idx->name) {
+        free(user_data);
         free(idx_tree_name);
         set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to allocate index name");
         return WTREE3_ENOMEM;
@@ -279,6 +277,78 @@ int wtree3_index_load_metadata(wtree3_tree_t *tree,
     tree->index_count++;
     return WTREE3_OK;
 }
+
+/* ============================================================
+ * Introspection Operations
+ * ============================================================ */
+
+int wtree3_index_get_extractor_id(wtree3_tree_t *tree,
+                                    const char *index_name,
+                                    uint64_t *out_extractor_id,
+                                    gerror_t *error) {
+    if (!tree || !index_name || !out_extractor_id) {
+        set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Invalid parameters");
+        return WTREE3_EINVAL;
+    }
+
+    /* Check if index is loaded */
+    wtree3_index_t *idx = find_index(tree, index_name);
+    if (idx) {
+        *out_extractor_id = idx->extractor_id;
+        return WTREE3_OK;
+    }
+
+    /* Read from metadata */
+    MDB_txn *txn;
+    int rc = mdb_txn_begin(tree->db->env, NULL, MDB_RDONLY, &txn);
+    if (rc != 0) {
+        return translate_mdb_error(rc, error);
+    }
+
+    MDB_dbi meta_dbi;
+    rc = get_metadata_dbi(tree->db, txn, &meta_dbi, error);
+    if (rc != 0) {
+        mdb_txn_abort(txn);
+        return rc;
+    }
+
+    char *meta_key = build_metadata_key(tree->name, index_name);
+    if (!meta_key) {
+        mdb_txn_abort(txn);
+        set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to build metadata key");
+        return WTREE3_ENOMEM;
+    }
+
+    MDB_val key = {.mv_size = strlen(meta_key), .mv_data = meta_key};
+    MDB_val val;
+
+    rc = mdb_get(txn, meta_dbi, &key, &val);
+    free(meta_key);
+
+    if (rc != 0) {
+        mdb_txn_abort(txn);
+        if (rc == MDB_NOTFOUND) {
+            return translate_mdb_error(rc, error);
+        }
+        return translate_mdb_error(rc, error);
+    }
+
+    if (val.mv_size < 8) {
+        mdb_txn_abort(txn);
+        set_error(error, WTREE3_LIB, WTREE3_ERROR, "Invalid metadata format");
+        return WTREE3_ERROR;
+    }
+
+    uint8_t *meta_data = (uint8_t*)val.mv_data;
+    memcpy(out_extractor_id, meta_data, 8);
+
+    mdb_txn_abort(txn);
+    return WTREE3_OK;
+}
+
+/* ============================================================
+ * List Persisted Indexes
+ * ============================================================ */
 
 char** wtree3_tree_list_persisted_indexes(wtree3_tree_t *tree,
                                             size_t *count,

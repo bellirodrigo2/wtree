@@ -33,9 +33,23 @@
 
 #include "wtree3.h"
 
+/* Extractor ID for test extractors */
+#define TEST_EXTRACTOR_ID WTREE3_EXTRACTOR(1, 1)
+
 /* Test database path */
 static char test_db_path[256];
 static wtree3_db_t *test_db = NULL;
+
+/* Forward declarations of extractors */
+static bool simple_key_extractor(const void *value, size_t value_len,
+                                  void *user_data,
+                                  void **out_key, size_t *out_len);
+static bool failing_key_extractor(const void *value, size_t value_len,
+                                   void *user_data,
+                                   void **out_key, size_t *out_len);
+static bool null_key_extractor(const void *value, size_t value_len,
+                                void *user_data,
+                                void **out_key, size_t *out_len);
 
 /* ============================================================
  * Test Fixtures
@@ -56,6 +70,28 @@ static int setup_db(void **state) {
     test_db = wtree3_db_open(test_db_path, 64 * 1024 * 1024, 128, 0, &error);
     if (!test_db) {
         fprintf(stderr, "Failed to create test database: %s\n", error.message);
+        return -1;
+    }
+
+    /* Register all extractors */
+    int rc = wtree3_db_register_key_extractor(test_db, TEST_EXTRACTOR_ID, simple_key_extractor, &error);
+    if (rc != WTREE3_OK) {
+        fprintf(stderr, "Failed to register simple extractor: %s\n", error.message);
+        wtree3_db_close(test_db);
+        return -1;
+    }
+
+    rc = wtree3_db_register_key_extractor(test_db, WTREE3_EXTRACTOR(1, 2), failing_key_extractor, &error);
+    if (rc != WTREE3_OK) {
+        fprintf(stderr, "Failed to register failing extractor: %s\n", error.message);
+        wtree3_db_close(test_db);
+        return -1;
+    }
+
+    rc = wtree3_db_register_key_extractor(test_db, WTREE3_EXTRACTOR(1, 3), null_key_extractor, &error);
+    if (rc != WTREE3_OK) {
+        fprintf(stderr, "Failed to register null extractor: %s\n", error.message);
+        wtree3_db_close(test_db);
         return -1;
     }
 
@@ -159,7 +195,7 @@ static void test_index_key_extraction_failure(void **state) {
     // Add index with failing key extractor (returns false)
     wtree3_index_config_t config = {
         .name = "fail_idx",
-        .key_fn = failing_key_extractor,
+        .key_extractor_id = WTREE3_EXTRACTOR(1, 2),  /* failing_key_extractor */
         .user_data = NULL,
         .unique = false,
         .sparse = false,
@@ -186,7 +222,7 @@ static void test_sparse_index_key_extraction_failure(void **state) {
     // Add SPARSE index with failing key extractor
     wtree3_index_config_t config = {
         .name = "sparse_fail_idx",
-        .key_fn = failing_key_extractor,
+        .key_extractor_id = WTREE3_EXTRACTOR(1, 2),  /* failing_key_extractor */
         .user_data = NULL,
         .unique = false,
         .sparse = true,  // Sparse, so failures should be OK
@@ -213,7 +249,7 @@ static void test_index_null_key_extraction(void **state) {
     // Add NON-SPARSE index that returns true but NULL key
     wtree3_index_config_t config = {
         .name = "null_key_idx",
-        .key_fn = null_key_extractor,
+        .key_extractor_id = WTREE3_EXTRACTOR(1, 3),  /* null_key_extractor */
         .user_data = NULL,
         .unique = false,
         .sparse = false,  // Non-sparse - NULL key should cause error
@@ -270,7 +306,7 @@ static void test_populate_unique_index_duplicates(void **state) {
     // Now add UNIQUE index
     wtree3_index_config_t config = {
         .name = "prefix_idx",
-        .key_fn = simple_key_extractor,
+        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = NULL,
         .unique = true,
         .sparse = false,
@@ -315,7 +351,7 @@ static void test_many_indexes_capacity_expansion(void **state) {
 
         wtree3_index_config_t config = {
             .name = idx_name,
-            .key_fn = simple_key_extractor,
+            .key_extractor_id = TEST_EXTRACTOR_ID,
             .user_data = NULL,
             .unique = false,
             .sparse = false,
@@ -525,7 +561,7 @@ static void test_index_seek_range(void **state) {
     // Create an index
     wtree3_index_config_t config = {
         .name = "test_idx",
-        .key_fn = simple_key_extractor,
+        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = NULL,
         .unique = false,
         .sparse = false,

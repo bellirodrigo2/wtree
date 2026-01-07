@@ -34,9 +34,17 @@
 
 #include "wtree3.h"
 
+/* Extractor ID for test extractors */
+#define TEST_EXTRACTOR_ID WTREE3_EXTRACTOR(1, 1)
+
 /* Test database path */
 static char test_db_path[256];
 static wtree3_db_t *test_db = NULL;
+
+/* Forward declaration of extractor for registration */
+static bool prefix_key_extractor(const void *value, size_t value_len,
+                                   void *user_data,
+                                   void **out_key, size_t *out_len);
 
 /* ============================================================
  * Test Fixtures
@@ -57,6 +65,14 @@ static int setup_db(void **state) {
     test_db = wtree3_db_open(test_db_path, 64 * 1024 * 1024, 128, 0, &error);
     if (!test_db) {
         fprintf(stderr, "Failed to create test database: %s\n", error.message);
+        return -1;
+    }
+
+    /* Register the key extractor */
+    int rc = wtree3_db_register_key_extractor(test_db, TEST_EXTRACTOR_ID, prefix_key_extractor, &error);
+    if (rc != WTREE3_OK) {
+        fprintf(stderr, "Failed to register key extractor: %s\n", error.message);
+        wtree3_db_close(test_db);
         return -1;
     }
 
@@ -348,10 +364,10 @@ static void test_upsert_txn_multiple_in_one_transaction(void **state) {
  * Index Maintenance During Upsert
  * ============================================================ */
 
-/* Simple key extractor for testing */
-static bool simple_key_extractor(const void *value, size_t value_len,
-                                  void *user_data,
-                                  void **out_key, size_t *out_len) {
+/* Prefix key extractor - extracts first 3 chars as index key */
+static bool prefix_key_extractor(const void *value, size_t value_len,
+                                   void *user_data,
+                                   void **out_key, size_t *out_len) {
     (void)user_data;
 
     /* Extract first 3 chars as index key */
@@ -377,9 +393,8 @@ static void test_upsert_maintains_indexes(void **state) {
     /* Add index */
     wtree3_index_config_t idx_config = {
         .name = "prefix_idx",
-        .key_fn = simple_key_extractor,
+        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = NULL,
-        .user_data_cleanup = NULL,
         .unique = false,
         .sparse = false,
         .compare = NULL
@@ -427,9 +442,8 @@ static void test_upsert_unique_index_violation(void **state) {
     /* Add UNIQUE index */
     wtree3_index_config_t idx_config = {
         .name = "unique_prefix",
-        .key_fn = simple_key_extractor,
+        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = NULL,
-        .user_data_cleanup = NULL,
         .unique = true,
         .sparse = false,
         .compare = NULL
@@ -767,9 +781,8 @@ static void test_upsert_many_index_maintenance(void **state) {
     /* Add index */
     wtree3_index_config_t idx_config = {
         .name = "prefix_idx",
-        .key_fn = simple_key_extractor,
+        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = NULL,
-        .user_data_cleanup = NULL,
         .unique = false,
         .sparse = false,
         .compare = NULL
@@ -867,9 +880,8 @@ static void test_upsert_many_unique_violation(void **state) {
     /* Add UNIQUE index */
     wtree3_index_config_t idx_config = {
         .name = "unique_prefix",
-        .key_fn = simple_key_extractor,
+        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = NULL,
-        .user_data_cleanup = NULL,
         .unique = true,
         .sparse = false,
         .compare = NULL

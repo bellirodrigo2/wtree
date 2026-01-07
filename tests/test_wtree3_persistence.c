@@ -258,11 +258,9 @@ static void test_add_index_with_persistence(void **state) {
         .name = "email_idx",
         .key_fn = test_key_extractor,
         .user_data = user_data,
-        .user_data_cleanup = test_cleanup,
         .unique = true,
         .sparse = false,
         .compare = NULL,
-        .persistence = &persistence
     };
 
     int rc = wtree3_tree_add_index(tree, &config, &error);
@@ -293,11 +291,9 @@ static void test_add_index_persistence_metadata_save(void **state) {
         .name = "test_idx",
         .key_fn = test_key_extractor,
         .user_data = user_data,
-        .user_data_cleanup = test_cleanup,
         .unique = false,
         .sparse = true,
         .compare = NULL,
-        .persistence = &persistence
     };
 
     int rc = wtree3_tree_add_index(tree, &config, &error);
@@ -344,11 +340,9 @@ static void test_index_save_metadata_success(void **state) {
         .name = "meta_idx",
         .key_fn = test_key_extractor,
         .user_data = user_data,
-        .user_data_cleanup = test_cleanup,
         .unique = true,
         .sparse = false,
         .compare = NULL,
-        .persistence = &persistence
     };
 
     int rc = wtree3_tree_add_index(tree, &config, &error);
@@ -374,11 +368,9 @@ static void test_index_save_metadata_no_persistence(void **state) {
         .name = "no_persist_idx",
         .key_fn = test_key_extractor,
         .user_data = (void *)"field",
-        .user_data_cleanup = NULL,
         .unique = false,
         .sparse = false,
         .compare = NULL,
-        .persistence = NULL  /* No persistence */
     };
 
     int rc = wtree3_tree_add_index(tree, &config, &error);
@@ -429,11 +421,9 @@ static void test_index_load_metadata_success(void **state) {
         .name = "load_idx",
         .key_fn = test_key_extractor,
         .user_data = user_data,
-        .user_data_cleanup = test_cleanup,
         .unique = true,
         .sparse = true,
         .compare = NULL,
-        .persistence = &persistence
     };
 
     int rc = wtree3_tree_add_index(tree, &config, &error);
@@ -475,11 +465,9 @@ static void test_index_load_metadata_already_loaded(void **state) {
         .name = "dup_idx",
         .key_fn = test_key_extractor,
         .user_data = user_data,
-        .user_data_cleanup = test_cleanup,
         .unique = false,
         .sparse = false,
         .compare = NULL,
-        .persistence = &persistence
     };
 
     int rc = wtree3_tree_add_index(tree, &config, &error);
@@ -539,11 +527,9 @@ static void test_list_persisted_indexes_success(void **state) {
             .name = idx_name,
             .key_fn = test_key_extractor,
             .user_data = user_data,
-            .user_data_cleanup = test_cleanup,
             .unique = false,
             .sparse = false,
             .compare = NULL,
-            .persistence = &persistence
         };
 
         int rc = wtree3_tree_add_index(tree, &config, &error);
@@ -611,11 +597,9 @@ static void test_list_persisted_indexes_prefix_filtering(void **state) {
         .name = "idx_tree1",
         .key_fn = test_key_extractor,
         .user_data = user_data1,
-        .user_data_cleanup = test_cleanup,
         .unique = false,
         .sparse = false,
         .compare = NULL,
-        .persistence = &persistence
     };
     int rc = wtree3_tree_add_index(tree1, &config1, &error);
     assert_int_equal(WTREE3_OK, rc);
@@ -626,11 +610,9 @@ static void test_list_persisted_indexes_prefix_filtering(void **state) {
         .name = "idx_tree2",
         .key_fn = test_key_extractor,
         .user_data = user_data2,
-        .user_data_cleanup = test_cleanup,
         .unique = false,
         .sparse = false,
         .compare = NULL,
-        .persistence = &persistence
     };
     rc = wtree3_tree_add_index(tree2, &config2, &error);
     assert_int_equal(WTREE3_OK, rc);
@@ -678,11 +660,9 @@ static void test_drop_index_with_persistence(void **state) {
         .name = "drop_idx",
         .key_fn = test_key_extractor,
         .user_data = user_data,
-        .user_data_cleanup = test_cleanup,
         .unique = false,
         .sparse = false,
         .compare = NULL,
-        .persistence = &persistence
     };
 
     int rc = wtree3_tree_add_index(tree, &config, &error);
@@ -748,11 +728,9 @@ static void test_index_save_metadata_serialize_failure(void **state) {
         .name = "fail_idx",
         .key_fn = test_key_extractor,
         .user_data = user_data,
-        .user_data_cleanup = test_cleanup,
         .unique = false,
         .sparse = false,
         .compare = NULL,
-        .persistence = &persistence
     };
 
     /* This should fail because serialize will return error */
@@ -785,11 +763,9 @@ static void test_index_load_metadata_deserialize_failure(void **state) {
         .name = "deser_idx",
         .key_fn = test_key_extractor,
         .user_data = user_data,
-        .user_data_cleanup = test_cleanup,
         .unique = false,
         .sparse = false,
         .compare = NULL,
-        .persistence = &good_persistence
     };
 
     int rc = wtree3_tree_add_index(tree, &config, &error);
@@ -888,11 +864,9 @@ static void test_index_with_custom_comparator(void **state) {
         .name = "name_idx",
         .key_fn = test_key_extractor,
         .user_data = user_data,
-        .user_data_cleanup = test_cleanup,
         .unique = false,
         .sparse = false,
         .compare = test_comparator,  /* Custom comparator */
-        .persistence = &persistence
     };
 
     int rc = wtree3_tree_add_index(tree, &config, &error);
@@ -949,11 +923,9 @@ static void test_populate_index_with_persistence(void **state) {
         .name = "title_idx",
         .key_fn = test_key_extractor,
         .user_data = user_data,
-        .user_data_cleanup = test_cleanup,
         .unique = false,
         .sparse = false,
         .compare = NULL,
-        .persistence = &persistence
     };
 
     rc = wtree3_tree_add_index(tree, &config, &error);
@@ -1001,11 +973,9 @@ static void test_multiple_indexes_with_persistence(void **state) {
             .name = idx_name,
             .key_fn = test_key_extractor,
             .user_data = user_data,
-            .user_data_cleanup = test_cleanup,
             .unique = (i % 2 == 0),  /* Alternate unique/non-unique */
             .sparse = (i % 3 == 0),  /* Some sparse */
             .compare = NULL,
-            .persistence = &persistence
         };
 
         int rc = wtree3_tree_add_index(tree, &config, &error);
@@ -1046,11 +1016,9 @@ static void test_full_persistence_workflow(void **state) {
         .name = "email_idx",
         .key_fn = test_key_extractor,
         .user_data = user_data,
-        .user_data_cleanup = test_cleanup,
         .unique = true,
         .sparse = false,
         .compare = NULL,
-        .persistence = &persistence
     };
 
     int rc = wtree3_tree_add_index(tree, &config, &error);
@@ -1120,11 +1088,9 @@ static void test_auto_load_indexes(void **state) {
         .name = "auto_idx1",
         .key_fn = test_key_extractor,
         .user_data = user_data1,
-        .user_data_cleanup = free,
         .unique = true,
         .sparse = false,
         .compare = NULL,
-        .persistence = &persistence
     };
 
     int rc = wtree3_tree_add_index(tree, &idx_config1, &error);
@@ -1142,11 +1108,9 @@ static void test_auto_load_indexes(void **state) {
         .name = "auto_idx2",
         .key_fn = test_key_extractor,
         .user_data = user_data2,
-        .user_data_cleanup = free,
         .unique = false,
         .sparse = true,
         .compare = NULL,
-        .persistence = &persistence
     };
 
     rc = wtree3_tree_add_index(tree, &idx_config2, &error);
@@ -1268,11 +1232,9 @@ static void test_auto_load_selective(void **state) {
         .name = "load_me",
         .key_fn = test_key_extractor,
         .user_data = user_data1,
-        .user_data_cleanup = free,
         .unique = false,
         .sparse = false,
         .compare = NULL,
-        .persistence = &persistence
     };
     wtree3_tree_add_index(tree, &idx_config1, &error);
     wtree3_index_save_metadata(tree, "load_me", &error);
@@ -1283,11 +1245,9 @@ static void test_auto_load_selective(void **state) {
         .name = "skip_me",
         .key_fn = test_key_extractor,
         .user_data = user_data2,
-        .user_data_cleanup = free,
         .unique = false,
         .sparse = false,
         .compare = NULL,
-        .persistence = &persistence
     };
     wtree3_tree_add_index(tree, &idx_config2, &error);
     wtree3_index_save_metadata(tree, "skip_me", &error);

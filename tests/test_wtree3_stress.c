@@ -24,8 +24,16 @@
 
 #include "wtree3.h"
 
+/* Extractor ID for test extractors */
+#define TEST_EXTRACTOR_ID WTREE3_EXTRACTOR(1, 1)
+
 static char test_db_path[256];
 static wtree3_db_t *test_db = NULL;
+
+/* Forward declaration of extractor */
+static bool extract_first_char(const void *value, size_t value_len,
+                                void *user_data,
+                                void **out_key, size_t *out_len);
 
 /* ============================================================
  * Setup/Teardown
@@ -47,6 +55,14 @@ static int setup(void **state) {
     test_db = wtree3_db_open(test_db_path, 512 * 1024 * 1024, 128, 0, &error);
     if (!test_db) {
         fprintf(stderr, "Failed to create test database: %s\n", error.message);
+        return -1;
+    }
+
+    /* Register the key extractor */
+    int rc = wtree3_db_register_key_extractor(test_db, TEST_EXTRACTOR_ID, extract_first_char, &error);
+    if (rc != WTREE3_OK) {
+        fprintf(stderr, "Failed to register key extractor: %s\n", error.message);
+        wtree3_db_close(test_db);
         return -1;
     }
 
@@ -318,7 +334,7 @@ static void test_index_high_cardinality(void **state) {
     /* Add index on first character */
     wtree3_index_config_t config = {
         .name = "first_char_idx",
-        .key_fn = extract_first_char,
+        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = NULL,
         .unique = false,
         .sparse = false,

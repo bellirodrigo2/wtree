@@ -10,8 +10,8 @@
 
 #include "wtree3_internal.h"
 
-/* Forward declaration from wtree3_index_persist.c */
-extern int wtree3_index_save_metadata(wtree3_tree_t *tree, const char *index_name, gerror_t *error);
+/* Forward declarations from wtree3_index_persist.c */
+extern int save_index_metadata(wtree3_tree_t *tree, const char *index_name, gerror_t *error);
 
 /* ============================================================
  * Helper Functions
@@ -64,7 +64,7 @@ char* build_metadata_key(const char *tree_name, const char *index_name) {
 int wtree3_tree_add_index(wtree3_tree_t *tree,
                            const wtree3_index_config_t *config,
                            gerror_t *error) {
-    if (!tree || !config || !config->name || !config->key_fn) {
+    if (!tree || !config || !config->name) {
         set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Invalid parameters");
         return WTREE3_EINVAL;
     }
@@ -74,6 +74,15 @@ int wtree3_tree_add_index(wtree3_tree_t *tree,
         set_error(error, WTREE3_LIB, WTREE3_KEY_EXISTS,
                  "Index '%s' already exists", config->name);
         return WTREE3_KEY_EXISTS;
+    }
+
+    /* Look up extractor function from registry */
+    wtree3_index_key_fn key_fn = find_extractor(tree->db, config->key_extractor_id);
+    if (!key_fn) {
+        set_error(error, WTREE3_LIB, WTREE3_EINVAL,
+                 "Extractor ID 0x%016llx not registered",
+                 (unsigned long long)config->key_extractor_id);
+        return WTREE3_EINVAL;
     }
 
     /* Expand array if needed */
@@ -133,18 +142,30 @@ int wtree3_tree_add_index(wtree3_tree_t *tree,
     idx->name = strdup(config->name);
     idx->tree_name = idx_tree_name;
     idx->dbi = idx_dbi;
-    idx->key_fn = config->key_fn;
-    idx->user_data = config->user_data;
-    idx->user_data_cleanup = config->user_data_cleanup;
+    idx->extractor_id = config->key_extractor_id;
+    idx->key_fn = key_fn;
     idx->unique = config->unique;
     idx->sparse = config->sparse;
     idx->compare = config->compare;
-    idx->has_persistence = (config->persistence != NULL);
-    if (idx->has_persistence) {
-        idx->persistence = *config->persistence;
+
+    /* Copy user_data if provided */
+    if (config->user_data && config->user_data_len > 0) {
+        idx->user_data = malloc(config->user_data_len);
+        if (!idx->user_data) {
+            free(idx->name);
+            free(idx_tree_name);
+            set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to allocate user_data");
+            return WTREE3_ENOMEM;
+        }
+        memcpy(idx->user_data, config->user_data, config->user_data_len);
+        idx->user_data_len = config->user_data_len;
+    } else {
+        idx->user_data = NULL;
+        idx->user_data_len = 0;
     }
 
     if (!idx->name) {
+        free(idx->user_data);
         free(idx_tree_name);
         set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to allocate index name");
         return WTREE3_ENOMEM;
@@ -152,27 +173,23 @@ int wtree3_tree_add_index(wtree3_tree_t *tree,
 
     tree->index_count++;
 
-    /* Save metadata if persistence is configured */
-    if (idx->has_persistence) {
-        rc = wtree3_index_save_metadata(tree, config->name, error);
-        if (rc != 0) {
-            /* Failed to save metadata - roll back */
-            tree->index_count--;
-            if (idx->user_data_cleanup && idx->user_data) {
-                idx->user_data_cleanup(idx->user_data);
-            }
-            free(idx->name);
-            free(idx->tree_name);
+    /* Save metadata (always - metadata is now always persisted) */
+    rc = save_index_metadata(tree, config->name, error);
+    if (rc != 0) {
+        /* Failed to save metadata - roll back */
+        tree->index_count--;
+        free(idx->user_data);
+        free(idx->name);
+        free(idx->tree_name);
 
-            /* Drop the index tree */
-            MDB_txn *drop_txn;
-            if (mdb_txn_begin(tree->db->env, NULL, 0, &drop_txn) == 0) {
-                mdb_drop(drop_txn, idx->dbi, 1);
-                mdb_txn_commit(drop_txn);
-            }
-
-            return rc;
+        /* Drop the index tree */
+        MDB_txn *drop_txn;
+        if (mdb_txn_begin(tree->db->env, NULL, 0, &drop_txn) == 0) {
+            mdb_drop(drop_txn, idx->dbi, 1);
+            mdb_txn_commit(drop_txn);
         }
+
+        return rc;
     }
 
     return WTREE3_OK;
@@ -300,27 +317,23 @@ int wtree3_tree_drop_index(wtree3_tree_t *tree,
     rc = mdb_txn_commit(txn);
     if (rc != 0) return translate_mdb_error(rc, error);
 
-    /* Delete metadata if it exists */
-    if (idx->has_persistence) {
-        rc = mdb_txn_begin(tree->db->env, NULL, 0, &txn);
-        if (rc == 0) {
-            MDB_dbi meta_dbi;
-            if (get_metadata_dbi(tree->db, txn, &meta_dbi, NULL) == 0) {
-                char *meta_key = build_metadata_key(tree->name, index_name);
-                if (meta_key) {
-                    MDB_val key = {.mv_size = strlen(meta_key), .mv_data = meta_key};
-                    mdb_del(txn, meta_dbi, &key, NULL);
-                    free(meta_key);
-                }
+    /* Delete metadata */
+    rc = mdb_txn_begin(tree->db->env, NULL, 0, &txn);
+    if (rc == 0) {
+        MDB_dbi meta_dbi;
+        if (get_metadata_dbi(tree->db, txn, &meta_dbi, NULL) == 0) {
+            char *meta_key = build_metadata_key(tree->name, index_name);
+            if (meta_key) {
+                MDB_val key = {.mv_size = strlen(meta_key), .mv_data = meta_key};
+                mdb_del(txn, meta_dbi, &key, NULL);
+                free(meta_key);
             }
-            mdb_txn_commit(txn);
         }
+        mdb_txn_commit(txn);
     }
 
     /* Free index entry */
-    if (idx->user_data_cleanup && idx->user_data) {
-        idx->user_data_cleanup(idx->user_data);
-    }
+    free(idx->user_data);
     free(idx->name);
     free(idx->tree_name);
 

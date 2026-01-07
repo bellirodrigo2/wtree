@@ -26,11 +26,20 @@
 #define WTREE3_LIB "wtree3"
 #define WTREE3_INDEX_PREFIX "idx:"
 #define WTREE3_META_DB "__wtree3_index_meta__"
-#define WTREE3_META_VERSION 1
+
+/* Extractor registry - simple hash table */
+#define WTREE3_EXTRACTOR_REGISTRY_SIZE 64
 
 /* ============================================================
  * Internal Structure Definitions
  * ============================================================ */
+
+/* Extractor registry entry (linked list for hash collision handling) */
+typedef struct extractor_entry {
+    uint64_t extractor_id;
+    wtree3_index_key_fn key_fn;
+    struct extractor_entry *next;
+} extractor_entry_t;
 
 /* Database handle */
 struct wtree3_db_t {
@@ -39,6 +48,9 @@ struct wtree3_db_t {
     size_t mapsize;
     unsigned int max_dbs;
     unsigned int flags;
+
+    /* Extractor registry (hash table with chaining) */
+    extractor_entry_t *extractors[WTREE3_EXTRACTOR_REGISTRY_SIZE];
 };
 
 /* Transaction handle */
@@ -53,14 +65,13 @@ typedef struct wtree3_index {
     char *name;                     /* Index name */
     char *tree_name;                /* Full tree name (idx:tree:name) */
     MDB_dbi dbi;                    /* Index DBI handle */
-    wtree3_index_key_fn key_fn;     /* Key extraction callback */
-    void *user_data;                /* Callback user data */
-    wtree3_user_data_cleanup_fn user_data_cleanup; /* Cleanup callback */
+    uint64_t extractor_id;          /* Extractor ID */
+    wtree3_index_key_fn key_fn;     /* Key extraction callback (looked up from registry) */
+    void *user_data;                /* Callback user data (owned by index, copied from config) */
+    size_t user_data_len;           /* Length of user_data */
     bool unique;                    /* Unique constraint */
     bool sparse;                    /* Sparse index */
     MDB_cmp_func *compare;          /* Custom comparator */
-    wtree3_user_data_persistence_t persistence; /* Persistence callbacks */
-    bool has_persistence;           /* Whether persistence is configured */
 } wtree3_index_t;
 
 /* Tree handle with index support */
@@ -102,6 +113,9 @@ struct wtree3_iterator_t {
 /* Translate LMDB error codes to wtree3 error codes */
 int translate_mdb_error(int mdb_rc, gerror_t *error);
 
+/* Extractor registry lookup */
+wtree3_index_key_fn find_extractor(wtree3_db_t *db, uint64_t extractor_id);
+
 /* ============================================================
  * Index Helper Functions (implemented in wtree3_index.c)
  * ============================================================ */
@@ -117,6 +131,9 @@ char* build_metadata_key(const char *tree_name, const char *index_name);
 
 /* Get or create metadata DBI */
 int get_metadata_dbi(wtree3_db_t *db, MDB_txn *txn, MDB_dbi *out_dbi, gerror_t *error);
+
+/* Load index metadata (from wtree3_index_persist.c) */
+int load_index_metadata(wtree3_tree_t *tree, const char *index_name, gerror_t *error);
 
 /* ============================================================
  * Index Maintenance Functions (implemented in wtree3_crud.c)
