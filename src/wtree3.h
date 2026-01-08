@@ -84,11 +84,11 @@ typedef bool (*wtree3_index_key_fn)(
 );
 
 /*
- * Helper macro to build extractor IDs
- * Upper 32 bits: version, Lower 32 bits: type
+ * Helper macro to build version identifier
+ * Upper 16 bits: major version, Lower 16 bits: minor version
  */
-#define WTREE3_EXTRACTOR(version, type) \
-    (((uint64_t)(version) << 32) | (uint32_t)(type))
+#define WTREE3_VERSION(major, minor) \
+    (((uint32_t)(major) << 16) | (uint16_t)(minor))
 
 /*
  * Merge callback for upsert operations
@@ -196,8 +196,7 @@ typedef bool (*wtree3_predicate_fn)(
  */
 typedef struct wtree3_index_config {
     const char *name;           /* Index name (e.g., "email_1") */
-    uint64_t key_extractor_id;  /* Extractor ID (registered with wtree3_db_register_key_extractor) */
-    const void *user_data;      /* User context for callback (persisted as-is) */
+    const void *user_data;      /* User context for callback (persisted as-is, e.g., BSON field spec) */
     size_t user_data_len;       /* Length of user_data in bytes */
     bool unique;                /* Unique constraint */
     bool sparse;                /* Skip entries where key_fn returns false */
@@ -223,6 +222,7 @@ typedef struct wtree3_kv {
  *   path    - Directory path (must exist)
  *   mapsize - Maximum database size in bytes (can be grown later)
  *   max_dbs - Maximum number of named databases/trees (typically 128)
+ *   version - Schema version (use WTREE3_VERSION macro, e.g., WTREE3_VERSION(1, 0))
  *   flags   - LMDB flags (MDB_RDONLY, MDB_NOSYNC, etc.)
  *   error   - Error output
  *
@@ -232,6 +232,7 @@ wtree3_db_t* wtree3_db_open(
     const char *path,
     size_t mapsize,
     unsigned int max_dbs,
+    uint32_t version,
     unsigned int flags,
     gerror_t *error
 );
@@ -255,22 +256,28 @@ int wtree3_db_stats(wtree3_db_t *db, MDB_stat *stat, gerror_t *error);
 MDB_env* wtree3_db_get_env(wtree3_db_t *db);
 
 /*
- * Register a key extractor function
+ * Register a key extractor function (library maintainer use only)
  *
- * Extractor functions must be registered before creating or opening trees with indexes.
- * The same extractors must be registered on every database open.
+ * Extractor functions must be registered for each version+flags combination.
+ * This is typically done by the library maintainer after opening the database.
  *
  * Parameters:
- *   db           - Database handle
- *   extractor_id - Unique ID for this extractor (use WTREE3_EXTRACTOR macro)
- *   key_fn       - Key extraction function
- *   error        - Error output
+ *   db      - Database handle
+ *   version - Version identifier (use WTREE3_VERSION macro, e.g., WTREE3_VERSION(1, 0))
+ *   flags   - Index flags combination (unique=0x01, sparse=0x02, etc.)
+ *   key_fn  - Key extraction function for this version+flags combination
+ *   error   - Error output
  *
  * Returns: 0 on success, error code on failure
+ *
+ * Example:
+ *   // Register field extractor for v1.0, non-unique non-sparse indexes
+ *   wtree3_db_register_key_extractor(db, WTREE3_VERSION(1, 0), 0x00, field_extractor_v1, &error);
  */
 int wtree3_db_register_key_extractor(
     wtree3_db_t *db,
-    uint64_t extractor_id,
+    uint32_t version,
+    uint32_t flags,
     wtree3_index_key_fn key_fn,
     gerror_t *error
 );

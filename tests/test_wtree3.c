@@ -28,7 +28,7 @@ static char test_db_path[256];
 static wtree3_db_t *test_db = NULL;
 
 /* Extractor ID for simple_key_extractor */
-#define TEST_EXTRACTOR_ID WTREE3_EXTRACTOR(1, 1)
+#define TEST_EXTRACTOR_ID WTREE3_VERSION(1, 1)
 
 /* Forward declaration */
 static bool simple_key_extractor(const void *value, size_t value_len,
@@ -51,19 +51,22 @@ static int setup_db(void **state) {
     mkdir(test_db_path, 0755);
 
     gerror_t error = {0};
-    test_db = wtree3_db_open(test_db_path, 64 * 1024 * 1024, 32, 0, &error);
+    test_db = wtree3_db_open(test_db_path, 64 * 1024 * 1024, 32, WTREE3_VERSION(1, 0), 0, &error);
     if (!test_db) {
         fprintf(stderr, "Failed to create test database: %s\n", error.message);
         return -1;
     }
 
-    /* Register the simple key extractor */
-    int rc = wtree3_db_register_key_extractor(test_db, TEST_EXTRACTOR_ID, simple_key_extractor, &error);
-    if (rc != WTREE3_OK) {
-        fprintf(stderr, "Failed to register extractor: %s\n", error.message);
-        wtree3_db_close(test_db);
-        test_db = NULL;
-        return -1;
+    /* Register the simple key extractor for all flag combinations */
+    int rc;
+    for (uint32_t flags = 0; flags <= 0x03; flags++) {
+        rc = wtree3_db_register_key_extractor(test_db, WTREE3_VERSION(1, 0), flags, simple_key_extractor, &error);
+        if (rc != WTREE3_OK) {
+            fprintf(stderr, "Failed to register extractor for flags=0x%02x: %s\n", flags, error.message);
+            wtree3_db_close(test_db);
+            test_db = NULL;
+            return -1;
+        }
     }
 
     return 0;
@@ -381,7 +384,6 @@ static void test_add_index(void **state) {
 
     wtree3_index_config_t config = {
         .name = "email_idx",
-        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = (void *)"email",
         .user_data_len = 6,
         .unique = true,
@@ -411,7 +413,6 @@ static void test_index_maintenance_insert(void **state) {
     /* Add email index */
     wtree3_index_config_t config = {
         .name = "email",
-        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = (void *)"email",
         .user_data_len = 6,
         .unique = false,
@@ -452,7 +453,6 @@ static void test_unique_index_violation(void **state) {
     /* Add unique email index */
     wtree3_index_config_t config = {
         .name = "email",
-        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = (void *)"email",
         .user_data_len = 6,
         .unique = true,
@@ -494,7 +494,6 @@ static void test_sparse_index(void **state) {
     /* Add sparse email index */
     wtree3_index_config_t config = {
         .name = "email",
-        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = (void *)"email",
         .user_data_len = 6,
         .unique = true,
@@ -535,7 +534,6 @@ static void test_index_maintenance_update(void **state) {
     /* Add email index */
     wtree3_index_config_t config = {
         .name = "email",
-        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = (void *)"email",
         .user_data_len = 6,
         .unique = true,
@@ -579,7 +577,6 @@ static void test_index_maintenance_delete(void **state) {
     /* Add email index */
     wtree3_index_config_t config = {
         .name = "email",
-        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = (void *)"email",
         .user_data_len = 6,
         .unique = false,
@@ -627,7 +624,6 @@ static void test_populate_index(void **state) {
     /* Add index AFTER data exists */
     wtree3_index_config_t config = {
         .name = "email",
-        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = (void *)"email",
         .user_data_len = 6,
         .unique = false,
@@ -664,7 +660,6 @@ static void test_drop_index(void **state) {
     /* Add index */
     wtree3_index_config_t config = {
         .name = "email",
-        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = (void *)"email",
         .user_data_len = 6,
         .unique = false,
@@ -705,7 +700,6 @@ static void test_multiple_indexes(void **state) {
     /* Add email index */
     wtree3_index_config_t email_config = {
         .name = "email",
-        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = (void *)"email",
         .user_data_len = 6,
         .unique = true,
@@ -717,7 +711,6 @@ static void test_multiple_indexes(void **state) {
     /* Add name index */
     wtree3_index_config_t name_config = {
         .name = "name",
-        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = (void *)"name",
         .user_data_len = 5,
         .unique = false,

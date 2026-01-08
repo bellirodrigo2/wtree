@@ -9,6 +9,7 @@
  */
 
 #include "wtree3_internal.h"
+#include "wtree3_extractor_registry.h"
 
 /* ============================================================
  * Error Translation
@@ -43,7 +44,8 @@ int translate_mdb_error(int mdb_rc, gerror_t *error) {
  * ============================================================ */
 
 wtree3_db_t* wtree3_db_open(const char *path, size_t mapsize,
-                             unsigned int max_dbs, unsigned int flags,
+                             unsigned int max_dbs, uint32_t version,
+                             unsigned int flags,
                              gerror_t *error) {
     if (!path) {
         set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Path cannot be NULL");
@@ -69,8 +71,16 @@ wtree3_db_t* wtree3_db_open(const char *path, size_t mapsize,
         return NULL;
     }
 
+    /* Store version */
+    db->version = version;
+
     /* Initialize extractor registry */
-    memset(db->extractors, 0, sizeof(db->extractors));
+    db->extractor_registry = wtree3_extractor_registry_create();
+    if (!db->extractor_registry) {
+        set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to create extractor registry");
+        free(db);
+        return NULL;
+    }
 
     int rc = mdb_env_create(&db->env);
     if (rc != 0) {
@@ -125,14 +135,7 @@ void wtree3_db_close(wtree3_db_t *db) {
     free(db->path);
 
     /* Free extractor registry */
-    for (size_t i = 0; i < WTREE3_EXTRACTOR_REGISTRY_SIZE; i++) {
-        extractor_entry_t *entry = db->extractors[i];
-        while (entry) {
-            extractor_entry_t *next = entry->next;
-            free(entry);
-            entry = next;
-        }
-    }
+    wtree3_extractor_registry_destroy(db->extractor_registry);
 
     free(db);
 }
@@ -293,49 +296,23 @@ bool wtree3_error_recoverable(int error_code) {
  * Extractor Registry Operations
  * ============================================================ */
 
-/* Simple hash function for extractor_id */
-static size_t hash_extractor_id(uint64_t id) {
-    /* FNV-1a hash */
-    uint64_t hash = 14695981039346656037ULL;
-    for (int i = 0; i < 8; i++) {
-        hash ^= (id & 0xFF);
-        hash *= 1099511628211ULL;
-        id >>= 8;
-    }
-    return hash % WTREE3_EXTRACTOR_REGISTRY_SIZE;
-}
-
-int wtree3_db_register_key_extractor(wtree3_db_t *db, uint64_t extractor_id,
-                                       wtree3_index_key_fn key_fn, gerror_t *error) {
+int wtree3_db_register_key_extractor(wtree3_db_t *db, uint32_t version,
+                                       uint32_t flags, wtree3_index_key_fn key_fn,
+                                       gerror_t *error) {
     if (!db || !key_fn) {
         set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Invalid parameters");
         return WTREE3_EINVAL;
     }
 
-    size_t slot = hash_extractor_id(extractor_id);
+    /* Build extractor ID from version and flags */
+    uint64_t extractor_id = build_extractor_id(version, flags);
 
-    /* Check if already registered */
-    extractor_entry_t *entry = db->extractors[slot];
-    while (entry) {
-        if (entry->extractor_id == extractor_id) {
-            /* Update existing entry */
-            entry->key_fn = key_fn;
-            return WTREE3_OK;
-        }
-        entry = entry->next;
+    /* Register in registry */
+    if (!wtree3_extractor_registry_set(db->extractor_registry, extractor_id, key_fn)) {
+        set_error(error, WTREE3_LIB, WTREE3_ERROR,
+                 "Failed to register extractor (version=%u, flags=0x%02x)", version, flags);
+        return WTREE3_ERROR;
     }
-
-    /* Add new entry */
-    extractor_entry_t *new_entry = malloc(sizeof(extractor_entry_t));
-    if (!new_entry) {
-        set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to allocate extractor entry");
-        return WTREE3_ENOMEM;
-    }
-
-    new_entry->extractor_id = extractor_id;
-    new_entry->key_fn = key_fn;
-    new_entry->next = db->extractors[slot];
-    db->extractors[slot] = new_entry;
 
     return WTREE3_OK;
 }
@@ -343,15 +320,5 @@ int wtree3_db_register_key_extractor(wtree3_db_t *db, uint64_t extractor_id,
 wtree3_index_key_fn find_extractor(wtree3_db_t *db, uint64_t extractor_id) {
     if (!db) return NULL;
 
-    size_t slot = hash_extractor_id(extractor_id);
-    extractor_entry_t *entry = db->extractors[slot];
-
-    while (entry) {
-        if (entry->extractor_id == extractor_id) {
-            return entry->key_fn;
-        }
-        entry = entry->next;
-    }
-
-    return NULL;
+    return wtree3_extractor_registry_get(db->extractor_registry, extractor_id);
 }

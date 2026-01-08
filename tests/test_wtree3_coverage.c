@@ -21,7 +21,7 @@
 #include "wtree3.h"
 
 /* Extractor ID for test extractors */
-#define TEST_EXTRACTOR_ID WTREE3_EXTRACTOR(1, 1)
+#define TEST_EXTRACTOR_ID WTREE3_VERSION(1, 1)
 #include "gerror.h"
 
 #define TEST_DB_PATH "./test_wtree3_coverage_db"
@@ -63,7 +63,7 @@ static void test_db_open_null_path(void **state) {
     (void)state;
     gerror_t error = {0};
 
-    wtree3_db_t *db = wtree3_db_open(NULL, 10485760, 128, 0, &error);
+    wtree3_db_t *db = wtree3_db_open(NULL, 10485760, 128, WTREE3_VERSION(1, 0), 0, &error);
     assert_null(db);
     assert_int_equal(WTREE3_EINVAL, error.code);
 }
@@ -166,7 +166,7 @@ static void test_tree_open_null_name(void **state) {
     (void)state;
     gerror_t error = {0};
 
-    wtree3_db_t *db = wtree3_db_open(TEST_DB_PATH, 10485760, 128, 0, &error);
+    wtree3_db_t *db = wtree3_db_open(TEST_DB_PATH, 10485760, 128, WTREE3_VERSION(1, 0), 0, &error);
     assert_non_null(db);
 
     wtree3_tree_t *tree = wtree3_tree_open(db, NULL, MDB_CREATE, 0, &error);
@@ -188,7 +188,7 @@ static void test_tree_delete_null_name(void **state) {
     (void)state;
     gerror_t error = {0};
 
-    wtree3_db_t *db = wtree3_db_open(TEST_DB_PATH, 10485760, 128, 0, &error);
+    wtree3_db_t *db = wtree3_db_open(TEST_DB_PATH, 10485760, 128, WTREE3_VERSION(1, 0), 0, &error);
     assert_non_null(db);
 
     int ret = wtree3_tree_delete(db, NULL, &error);
@@ -239,7 +239,7 @@ static void test_tree_add_index_null_config(void **state) {
     (void)state;
     gerror_t error = {0};
 
-    wtree3_db_t *db = wtree3_db_open(TEST_DB_PATH, 10485760, 128, 0, &error);
+    wtree3_db_t *db = wtree3_db_open(TEST_DB_PATH, 10485760, 128, WTREE3_VERSION(1, 0), 0, &error);
     assert_non_null(db);
 
     wtree3_tree_t *tree = wtree3_tree_open(db, "test", MDB_CREATE, 0, &error);
@@ -264,7 +264,7 @@ static void test_tree_populate_index_null_name(void **state) {
     (void)state;
     gerror_t error = {0};
 
-    wtree3_db_t *db = wtree3_db_open(TEST_DB_PATH, 10485760, 128, 0, &error);
+    wtree3_db_t *db = wtree3_db_open(TEST_DB_PATH, 10485760, 128, WTREE3_VERSION(1, 0), 0, &error);
     assert_non_null(db);
 
     wtree3_tree_t *tree = wtree3_tree_open(db, "test", MDB_CREATE, 0, &error);
@@ -289,7 +289,7 @@ static void test_tree_drop_index_null_name(void **state) {
     (void)state;
     gerror_t error = {0};
 
-    wtree3_db_t *db = wtree3_db_open(TEST_DB_PATH, 10485760, 128, 0, &error);
+    wtree3_db_t *db = wtree3_db_open(TEST_DB_PATH, 10485760, 128, WTREE3_VERSION(1, 0), 0, &error);
     assert_non_null(db);
 
     wtree3_tree_t *tree = wtree3_tree_open(db, "test", MDB_CREATE, 0, &error);
@@ -313,7 +313,7 @@ static void test_tree_has_index_null_name(void **state) {
     (void)state;
     gerror_t error = {0};
 
-    wtree3_db_t *db = wtree3_db_open(TEST_DB_PATH, 10485760, 128, 0, &error);
+    wtree3_db_t *db = wtree3_db_open(TEST_DB_PATH, 10485760, 128, WTREE3_VERSION(1, 0), 0, &error);
     assert_non_null(db);
 
     wtree3_tree_t *tree = wtree3_tree_open(db, "test", MDB_CREATE, 0, &error);
@@ -359,7 +359,7 @@ static void test_insert_one_txn_null_key(void **state) {
     (void)state;
     gerror_t error = {0};
 
-    wtree3_db_t *db = wtree3_db_open(TEST_DB_PATH, 10485760, 128, 0, &error);
+    wtree3_db_t *db = wtree3_db_open(TEST_DB_PATH, 10485760, 128, WTREE3_VERSION(1, 0), 0, &error);
     assert_non_null(db);
 
     wtree3_tree_t *tree = wtree3_tree_open(db, "test", MDB_CREATE, 0, &error);
@@ -422,7 +422,7 @@ static void test_upsert_many_txn_null_kvs(void **state) {
     (void)state;
     gerror_t error = {0};
 
-    wtree3_db_t *db = wtree3_db_open(TEST_DB_PATH, 10485760, 128, 0, &error);
+    wtree3_db_t *db = wtree3_db_open(TEST_DB_PATH, 10485760, 128, WTREE3_VERSION(1, 0), 0, &error);
     assert_non_null(db);
 
     wtree3_tree_t *tree = wtree3_tree_open(db, "test", MDB_CREATE, 0, &error);
@@ -653,7 +653,7 @@ static void test_index_seek_null_index_name(void **state) {
     (void)state;
     gerror_t error = {0};
 
-    wtree3_db_t *db = wtree3_db_open(TEST_DB_PATH, 10485760, 128, 0, &error);
+    wtree3_db_t *db = wtree3_db_open(TEST_DB_PATH, 10485760, 128, WTREE3_VERSION(1, 0), 0, &error);
     assert_non_null(db);
 
     wtree3_tree_t *tree = wtree3_tree_open(db, "test", MDB_CREATE, 0, &error);
@@ -731,7 +731,7 @@ static void test_error_recoverable(void **state) {
 // DISABLED:     (void)state;
 // DISABLED:     gerror_t error = {0};
 // DISABLED: 
-// DISABLED:     wtree3_db_t *db = wtree3_db_open(TEST_DB_PATH, 10485760, 128, 0, &error);
+// DISABLED:     wtree3_db_t *db = wtree3_db_open(TEST_DB_PATH, 10485760, 128, WTREE3_VERSION(1, 0), 0, &error);
 // DISABLED:     assert_non_null(db);
 // DISABLED: 
 // DISABLED:     wtree3_tree_t *tree = wtree3_tree_open(db, "test", MDB_CREATE, 0, &error);

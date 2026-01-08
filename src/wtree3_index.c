@@ -76,12 +76,16 @@ int wtree3_tree_add_index(wtree3_tree_t *tree,
         return WTREE3_KEY_EXISTS;
     }
 
+    /* Build extractor ID from db version and config flags */
+    uint32_t flags = extract_index_flags(config);
+    uint64_t extractor_id = build_extractor_id(tree->db->version, flags);
+
     /* Look up extractor function from registry */
-    wtree3_index_key_fn key_fn = find_extractor(tree->db, config->key_extractor_id);
+    wtree3_index_key_fn key_fn = find_extractor(tree->db, extractor_id);
     if (!key_fn) {
         set_error(error, WTREE3_LIB, WTREE3_EINVAL,
-                 "Extractor ID 0x%016llx not registered",
-                 (unsigned long long)config->key_extractor_id);
+                 "No extractor registered for version=%u flags=0x%02x",
+                 tree->db->version, flags);
         return WTREE3_EINVAL;
     }
 
@@ -142,7 +146,7 @@ int wtree3_tree_add_index(wtree3_tree_t *tree,
     idx->name = strdup(config->name);
     idx->tree_name = idx_tree_name;
     idx->dbi = idx_dbi;
-    idx->extractor_id = config->key_extractor_id;
+    idx->extractor_id = extractor_id;  /* Generated from db->version + flags */
     idx->key_fn = key_fn;
     idx->unique = config->unique;
     idx->sparse = config->sparse;

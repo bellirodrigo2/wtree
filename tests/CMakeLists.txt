@@ -115,6 +115,24 @@ target_include_directories(test_wqueue_mpsc PRIVATE ${cmocka_SOURCE_DIR}/include
 target_link_libraries(test_wqueue_mpsc PRIVATE wqueue ${CMOCKA_LIBRARY})
 add_test(NAME test_wqueue_mpsc COMMAND test_wqueue_mpsc)
 
+# Test for wvector module (generic dynamic array)
+add_executable(test_wvector test_wvector.c)
+target_include_directories(test_wvector PRIVATE ${cmocka_SOURCE_DIR}/include)
+target_link_libraries(test_wvector PRIVATE wtree3 ${CMOCKA_LIBRARY})
+add_test(NAME test_wvector COMMAND test_wvector)
+
+# Test for wtree3_extractor_registry module
+add_executable(test_wtree3_extractor_registry test_wtree3_extractor_registry.c)
+target_include_directories(test_wtree3_extractor_registry PRIVATE ${cmocka_SOURCE_DIR}/include)
+target_link_libraries(test_wtree3_extractor_registry PRIVATE wtree3 ${CMOCKA_LIBRARY})
+add_test(NAME test_wtree3_extractor_registry COMMAND test_wtree3_extractor_registry)
+
+# Test for wtree3 persistence (new simplified API)
+add_executable(test_wtree3_persistence_new test_wtree3_persistence_new.c)
+target_include_directories(test_wtree3_persistence_new PRIVATE ${cmocka_SOURCE_DIR}/include)
+target_link_libraries(test_wtree3_persistence_new PRIVATE wtree3 ${CMOCKA_LIBRARY})
+add_test(NAME test_wtree3_persistence_new COMMAND test_wtree3_persistence_new)
+
 # Platform-specific settings
 if(WIN32)
     target_compile_definitions(test_gerror PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -132,6 +150,9 @@ if(WIN32)
     target_compile_definitions(test_wbuffer PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wqueue PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wqueue_mpsc PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(test_wvector PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(test_wtree3_extractor_registry PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(test_wtree3_persistence_new PRIVATE _CRT_SECURE_NO_WARNINGS)
 
     # Copy cmocka DLL to test directory on Windows
     add_custom_command(TARGET test_gerror POST_BUILD
@@ -240,6 +261,27 @@ if(WIN32)
         COMMENT "Copying cmocka DLL to test directory"
     )
 
+    add_custom_command(TARGET test_wvector POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:cmocka>
+            $<TARGET_FILE_DIR:test_wvector>
+        COMMENT "Copying cmocka DLL to test directory"
+    )
+
+    add_custom_command(TARGET test_wtree3_extractor_registry POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:cmocka>
+            $<TARGET_FILE_DIR:test_wtree3_extractor_registry>
+        COMMENT "Copying cmocka DLL to test directory"
+    )
+
+    add_custom_command(TARGET test_wtree3_persistence_new POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:cmocka>
+            $<TARGET_FILE_DIR:test_wtree3_persistence_new>
+        COMMENT "Copying cmocka DLL to test directory"
+    )
+
     # For MinGW builds, copy required runtime DLLs
     if(MINGW)
         # Find MinGW bin directory
@@ -342,6 +384,24 @@ if(WIN32)
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                         ${DLL}
                         $<TARGET_FILE_DIR:test_wqueue_mpsc>
+                    COMMENT "Copying ${DLL}"
+                )
+                add_custom_command(TARGET test_wvector POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        ${DLL}
+                        $<TARGET_FILE_DIR:test_wvector>
+                    COMMENT "Copying ${DLL}"
+                )
+                add_custom_command(TARGET test_wtree3_extractor_registry POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        ${DLL}
+                        $<TARGET_FILE_DIR:test_wtree3_extractor_registry>
+                    COMMENT "Copying ${DLL}"
+                )
+                add_custom_command(TARGET test_wtree3_persistence_new POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        ${DLL}
+                        $<TARGET_FILE_DIR:test_wtree3_persistence_new>
                     COMMENT "Copying ${DLL}"
                 )
             endif()

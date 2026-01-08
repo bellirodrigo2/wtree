@@ -25,7 +25,7 @@
 #include "wtree3.h"
 
 /* Extractor ID for test extractors */
-#define TEST_EXTRACTOR_ID WTREE3_EXTRACTOR(1, 1)
+#define TEST_EXTRACTOR_ID WTREE3_VERSION(1, 1)
 
 static char test_db_path[256];
 static wtree3_db_t *test_db = NULL;
@@ -52,14 +52,24 @@ static int setup(void **state) {
     mkdir(test_db_path, 0755);
 
     /* Large database for stress tests */
-    test_db = wtree3_db_open(test_db_path, 512 * 1024 * 1024, 128, 0, &error);
+    test_db = wtree3_db_open(test_db_path, 512 * 1024 * 1024, 128, WTREE3_VERSION(1, 0), 0, &error);
     if (!test_db) {
         fprintf(stderr, "Failed to create test database: %s\n", error.message);
         return -1;
     }
 
     /* Register the key extractor */
-    int rc = wtree3_db_register_key_extractor(test_db, TEST_EXTRACTOR_ID, extract_first_char, &error);
+    int rc;
+    for (uint32_t flags = 0; flags <= 0x03; flags++) {
+        rc = wtree3_db_register_key_extractor(test_db, WTREE3_VERSION(1, 0), flags, extract_first_char, &error);
+        if (rc != WTREE3_OK) {
+            fprintf(stderr, "Failed to register extractor for flags=0x%02x: %s\n", flags, error.message);
+            wtree3_db_close(test_db);
+            test_db = NULL;
+            return -1;
+        }
+    }
+    rc = WTREE3_OK;
     if (rc != WTREE3_OK) {
         fprintf(stderr, "Failed to register key extractor: %s\n", error.message);
         wtree3_db_close(test_db);
@@ -334,7 +344,6 @@ static void test_index_high_cardinality(void **state) {
     /* Add index on first character */
     wtree3_index_config_t config = {
         .name = "first_char_idx",
-        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = NULL,
         .unique = false,
         .sparse = false,

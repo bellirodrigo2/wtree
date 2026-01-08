@@ -27,19 +27,12 @@
 #define WTREE3_INDEX_PREFIX "idx:"
 #define WTREE3_META_DB "__wtree3_index_meta__"
 
-/* Extractor registry - simple hash table */
-#define WTREE3_EXTRACTOR_REGISTRY_SIZE 64
-
 /* ============================================================
  * Internal Structure Definitions
  * ============================================================ */
 
-/* Extractor registry entry (linked list for hash collision handling) */
-typedef struct extractor_entry {
-    uint64_t extractor_id;
-    wtree3_index_key_fn key_fn;
-    struct extractor_entry *next;
-} extractor_entry_t;
+/* Forward declare registry */
+typedef struct wtree3_extractor_registry wtree3_extractor_registry_t;
 
 /* Database handle */
 struct wtree3_db_t {
@@ -47,10 +40,11 @@ struct wtree3_db_t {
     char *path;
     size_t mapsize;
     unsigned int max_dbs;
+    uint32_t version;               /* Schema version (WTREE3_VERSION) */
     unsigned int flags;
 
-    /* Extractor registry (hash table with chaining) */
-    extractor_entry_t *extractors[WTREE3_EXTRACTOR_REGISTRY_SIZE];
+    /* Extractor registry (version+flags → key_fn) */
+    wtree3_extractor_registry_t *extractor_registry;
 };
 
 /* Transaction handle */
@@ -115,6 +109,19 @@ int translate_mdb_error(int mdb_rc, gerror_t *error);
 
 /* Extractor registry lookup */
 wtree3_index_key_fn find_extractor(wtree3_db_t *db, uint64_t extractor_id);
+
+/* Build extractor ID from version and flags */
+static inline uint64_t build_extractor_id(uint32_t version, uint32_t flags) {
+    return ((uint64_t)version << 32) | flags;
+}
+
+/* Extract flags from index config */
+static inline uint32_t extract_index_flags(const wtree3_index_config_t *config) {
+    uint32_t flags = 0;
+    if (config->unique) flags |= 0x01;
+    if (config->sparse) flags |= 0x02;
+    return flags;
+}
 
 /* ============================================================
  * Index Helper Functions (implemented in wtree3_index.c)

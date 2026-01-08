@@ -44,7 +44,7 @@ static wtree3_db_t *create_tiny_db(void) {
     mkdir(test_db_path, 0755);
 
     // Create VERY small database (100KB) to trigger MAP_FULL easily
-    wtree3_db_t *db = wtree3_db_open(test_db_path, 100 * 1024, 10, 0, &error);
+    wtree3_db_t *db = wtree3_db_open(test_db_path, 100 * 1024, 10, WTREE3_VERSION(1, 0), 0, &error);
     return db;
 }
 

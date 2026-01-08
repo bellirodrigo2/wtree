@@ -106,6 +106,8 @@ endif()
 # Build wtree3 library - modular implementation
 add_library(wtree3 STATIC
     src/gerror.c
+    src/wvector.c
+    src/wtree3_extractor_registry.c
     src/wtree3_core.c
     src/wtree3_tree.c
     src/wtree3_index.c

@@ -30,7 +30,7 @@
 #include "wtree3.h"
 
 /* Extractor ID for test extractors */
-#define TEST_EXTRACTOR_ID WTREE3_EXTRACTOR(1, 1)
+#define TEST_EXTRACTOR_ID WTREE3_VERSION(1, 1)
 
 /* Test database path */
 static char test_db_path[256];
@@ -55,7 +55,7 @@ static int setup_db(void **state) {
     mkdir(test_db_path, 0755);
 
     gerror_t error = {0};
-    test_db = wtree3_db_open(test_db_path, 64 * 1024 * 1024, 32, 0, &error);
+    test_db = wtree3_db_open(test_db_path, 64 * 1024 * 1024, 32, WTREE3_VERSION(1, 0), 0, &error);
     if (!test_db) {
         fprintf(stderr, "Failed to create test database: %s\n", error.message);
         return -1;
@@ -91,7 +91,7 @@ static void test_db_open_null_path(void **state) {
     (void)state;
     gerror_t error = {0};
 
-    wtree3_db_t *db = wtree3_db_open(NULL, 1024 * 1024, 10, 0, &error);
+    wtree3_db_t *db = wtree3_db_open(NULL, 1024 * 1024, 10, WTREE3_VERSION(1, 0), 0, &error);
     assert_null(db);
     assert_int_not_equal(0, error.code);
 }
@@ -303,7 +303,6 @@ static void test_add_index_null_tree(void **state) {
 
     wtree3_index_config_t config = {
         .name = "test_idx",
-        .key_extractor_id = TEST_EXTRACTOR_ID,
         .user_data = NULL,
         .unique = false,
         .sparse = false,

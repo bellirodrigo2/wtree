@@ -33,7 +33,7 @@
 #include "wtree3.h"
 
 /* Extractor ID for test extractors */
-#define TEST_EXTRACTOR_ID WTREE3_EXTRACTOR(1, 1)
+#define TEST_EXTRACTOR_ID WTREE3_VERSION(1, 1)
 
 /* Test database path */
 static char test_db_path[256];
@@ -55,7 +55,7 @@ static int setup_db(void **state) {
     mkdir(test_db_path, 0755);
 
     gerror_t error = {0};
-    test_db = wtree3_db_open(test_db_path, 64 * 1024 * 1024, 128, 0, &error);
+    test_db = wtree3_db_open(test_db_path, 64 * 1024 * 1024, 128, WTREE3_VERSION(1, 0), 0, &error);
     if (!test_db) {
         fprintf(stderr, "Failed to create test database: %s\n", error.message);
         return -1;
