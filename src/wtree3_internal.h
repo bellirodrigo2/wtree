@@ -9,6 +9,8 @@
 #define WTREE3_INTERNAL_H
 
 #include "wtree3.h"
+#include "wvector.h"
+#include "macros.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -75,10 +77,8 @@ struct wtree3_tree_t {
     wtree3_db_t *db;
     unsigned int flags;
 
-    /* Indexes */
-    wtree3_index_t *indexes;
-    size_t index_count;
-    size_t index_capacity;
+    /* Indexes (vector of wtree3_index_t*) */
+    wvector_t *indexes;
 
     /* Entry tracking */
     int64_t entry_count;
@@ -105,10 +105,32 @@ struct wtree3_iterator_t {
  * ============================================================ */
 
 /* Translate LMDB error codes to wtree3 error codes */
+WTREE_COLD
 int translate_mdb_error(int mdb_rc, gerror_t *error);
 
 /* Extractor registry lookup */
+WTREE_PURE
 wtree3_index_key_fn find_extractor(wtree3_db_t *db, uint64_t extractor_id);
+
+/* Transaction wrapper helpers */
+WTREE_HOT WTREE_WARN_UNUSED
+int with_write_txn(wtree3_db_t *db,
+                   int (*fn)(MDB_txn*, void*),
+                   void *user_data,
+                   gerror_t *error);
+
+WTREE_HOT WTREE_WARN_UNUSED
+int with_read_txn(wtree3_db_t *db,
+                  int (*fn)(MDB_txn*, void*),
+                  void *user_data,
+                  gerror_t *error);
+
+/* Cursor wrapper helper */
+WTREE_WARN_UNUSED
+int with_cursor(MDB_txn *txn, MDB_dbi dbi,
+                int (*fn)(MDB_cursor*, void*),
+                void *user_data,
+                gerror_t *error);
 
 /* Build extractor ID from version and flags */
 static inline uint64_t build_extractor_id(uint32_t version, uint32_t flags) {
@@ -128,18 +150,39 @@ static inline uint32_t extract_index_flags(const wtree3_index_config_t *config) 
  * ============================================================ */
 
 /* Find index by name in tree's index array */
+WTREE_HOT WTREE_PURE
 wtree3_index_t* find_index(wtree3_tree_t *tree, const char *name);
 
 /* Build index tree name: idx:<tree_name>:<index_name> */
+WTREE_MALLOC
 char* build_index_tree_name(const char *tree_name, const char *index_name);
 
 /* Build metadata key: tree_name:index_name */
+WTREE_MALLOC
 char* build_metadata_key(const char *tree_name, const char *index_name);
 
 /* Get or create metadata DBI */
+WTREE_WARN_UNUSED
 int get_metadata_dbi(wtree3_db_t *db, MDB_txn *txn, MDB_dbi *out_dbi, gerror_t *error);
 
+/* High-level metadata access helpers (within transaction) */
+WTREE_WARN_UNUSED
+int metadata_get_txn(MDB_txn *txn, wtree3_db_t *db,
+                     const char *tree_name, const char *index_name,
+                     MDB_val *out_val, gerror_t *error);
+
+WTREE_WARN_UNUSED
+int metadata_put_txn(MDB_txn *txn, wtree3_db_t *db,
+                     const char *tree_name, const char *index_name,
+                     const void *data, size_t data_len, gerror_t *error);
+
+WTREE_WARN_UNUSED
+int metadata_delete_txn(MDB_txn *txn, wtree3_db_t *db,
+                        const char *tree_name, const char *index_name,
+                        gerror_t *error);
+
 /* Load index metadata (from wtree3_index_persist.c) */
+WTREE_COLD WTREE_WARN_UNUSED
 int load_index_metadata(wtree3_tree_t *tree, const char *index_name, gerror_t *error);
 
 /* ============================================================
@@ -147,12 +190,14 @@ int load_index_metadata(wtree3_tree_t *tree, const char *index_name, gerror_t *e
  * ============================================================ */
 
 /* Insert entry into all indexes (called during insert/update) */
+WTREE_HOT
 int indexes_insert(wtree3_tree_t *tree, MDB_txn *txn,
                    const void *key, size_t key_len,
                    const void *value, size_t value_len,
                    gerror_t *error);
 
 /* Delete entry from all indexes (called during delete/update) */
+WTREE_HOT
 int indexes_delete(wtree3_tree_t *tree, MDB_txn *txn,
                    const void *key, size_t key_len,
                    const void *value, size_t value_len,

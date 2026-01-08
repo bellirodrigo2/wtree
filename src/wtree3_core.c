@@ -10,11 +10,13 @@
 
 #include "wtree3_internal.h"
 #include "wtree3_extractor_registry.h"
+#include "macros.h"
 
 /* ============================================================
  * Error Translation
  * ============================================================ */
 
+WTREE_COLD
 int translate_mdb_error(int mdb_rc, gerror_t *error) {
     switch (mdb_rc) {
         case 0:
@@ -43,30 +45,31 @@ int translate_mdb_error(int mdb_rc, gerror_t *error) {
  * Database Operations
  * ============================================================ */
 
+WTREE_WARN_UNUSED
 wtree3_db_t* wtree3_db_open(const char *path, size_t mapsize,
                              unsigned int max_dbs, uint32_t version,
                              unsigned int flags,
                              gerror_t *error) {
-    if (!path) {
+    if (WTREE_UNLIKELY(!path)) {
         set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Path cannot be NULL");
         return NULL;
     }
 
     /* Check if directory exists */
     struct stat st = {0};
-    if (stat(path, &st) == -1) {
+    if (WTREE_UNLIKELY(stat(path, &st) == -1)) {
         set_error(error, WTREE3_LIB, WTREE3_EINVAL,
                  "Directory does not exist: %s", path);
         return NULL;
     }
-    if (!S_ISDIR(st.st_mode)) {
+    if (WTREE_UNLIKELY(!S_ISDIR(st.st_mode))) {
         set_error(error, WTREE3_LIB, WTREE3_EINVAL,
                  "Path is not a directory: %s", path);
         return NULL;
     }
 
     wtree3_db_t *db = calloc(1, sizeof(wtree3_db_t));
-    if (!db) {
+    if (WTREE_UNLIKELY(!db)) {
         set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to allocate database");
         return NULL;
     }
@@ -76,14 +79,14 @@ wtree3_db_t* wtree3_db_open(const char *path, size_t mapsize,
 
     /* Initialize extractor registry */
     db->extractor_registry = wtree3_extractor_registry_create();
-    if (!db->extractor_registry) {
+    if (WTREE_UNLIKELY(!db->extractor_registry)) {
         set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to create extractor registry");
         free(db);
         return NULL;
     }
 
     int rc = mdb_env_create(&db->env);
-    if (rc != 0) {
+    if (WTREE_UNLIKELY(rc != 0)) {
         set_error(error, WTREE3_LIB, WTREE3_ERROR,
                  "Failed to create environment: %s", mdb_strerror(rc));
         free(db);
@@ -95,7 +98,7 @@ wtree3_db_t* wtree3_db_open(const char *path, size_t mapsize,
     if (max_dbs == 0) max_dbs = 128;
 
     rc = mdb_env_set_mapsize(db->env, mapsize);
-    if (rc != 0) {
+    if (WTREE_UNLIKELY(rc != 0)) {
         set_error(error, WTREE3_LIB, WTREE3_ERROR,
                  "Failed to set mapsize: %s", mdb_strerror(rc));
         mdb_env_close(db->env);
@@ -104,7 +107,7 @@ wtree3_db_t* wtree3_db_open(const char *path, size_t mapsize,
     }
 
     rc = mdb_env_set_maxdbs(db->env, max_dbs);
-    if (rc != 0) {
+    if (WTREE_UNLIKELY(rc != 0)) {
         set_error(error, WTREE3_LIB, WTREE3_ERROR,
                  "Failed to set max databases: %s", mdb_strerror(rc));
         mdb_env_close(db->env);
@@ -113,7 +116,7 @@ wtree3_db_t* wtree3_db_open(const char *path, size_t mapsize,
     }
 
     rc = mdb_env_open(db->env, path, flags, 0664);
-    if (rc != 0) {
+    if (WTREE_UNLIKELY(rc != 0)) {
         set_error(error, WTREE3_LIB, WTREE3_ERROR,
                  "Failed to open environment: %s", mdb_strerror(rc));
         mdb_env_close(db->env);
@@ -140,41 +143,46 @@ void wtree3_db_close(wtree3_db_t *db) {
     free(db);
 }
 
+WTREE_WARN_UNUSED
 int wtree3_db_sync(wtree3_db_t *db, bool force, gerror_t *error) {
-    if (!db) {
+    if (WTREE_UNLIKELY(!db)) {
         set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Database cannot be NULL");
         return WTREE3_EINVAL;
     }
     int rc = mdb_env_sync(db->env, force ? 1 : 0);
-    if (rc != 0) return translate_mdb_error(rc, error);
+    if (WTREE_UNLIKELY(rc != 0)) return translate_mdb_error(rc, error);
     return WTREE3_OK;
 }
 
+WTREE_COLD WTREE_WARN_UNUSED
 int wtree3_db_resize(wtree3_db_t *db, size_t new_mapsize, gerror_t *error) {
-    if (!db) {
+    if (WTREE_UNLIKELY(!db)) {
         set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Database cannot be NULL");
         return WTREE3_EINVAL;
     }
     int rc = mdb_env_set_mapsize(db->env, new_mapsize);
-    if (rc != 0) return translate_mdb_error(rc, error);
+    if (WTREE_UNLIKELY(rc != 0)) return translate_mdb_error(rc, error);
     db->mapsize = new_mapsize;
     return WTREE3_OK;
 }
 
+WTREE_PURE
 size_t wtree3_db_get_mapsize(wtree3_db_t *db) {
     return db ? db->mapsize : 0;
 }
 
+WTREE_WARN_UNUSED
 int wtree3_db_stats(wtree3_db_t *db, MDB_stat *stat, gerror_t *error) {
-    if (!db || !stat) {
+    if (WTREE_UNLIKELY(!db || !stat)) {
         set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Invalid parameters");
         return WTREE3_EINVAL;
     }
     int rc = mdb_env_stat(db->env, stat);
-    if (rc != 0) return translate_mdb_error(rc, error);
+    if (WTREE_UNLIKELY(rc != 0)) return translate_mdb_error(rc, error);
     return WTREE3_OK;
 }
 
+WTREE_PURE
 MDB_env* wtree3_db_get_env(wtree3_db_t *db) {
     return db ? db->env : NULL;
 }
@@ -183,21 +191,22 @@ MDB_env* wtree3_db_get_env(wtree3_db_t *db) {
  * Transaction Operations
  * ============================================================ */
 
+WTREE_WARN_UNUSED
 wtree3_txn_t* wtree3_txn_begin(wtree3_db_t *db, bool write, gerror_t *error) {
-    if (!db) {
+    if (WTREE_UNLIKELY(!db)) {
         set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Database cannot be NULL");
         return NULL;
     }
 
     wtree3_txn_t *txn = calloc(1, sizeof(wtree3_txn_t));
-    if (!txn) {
+    if (WTREE_UNLIKELY(!txn)) {
         set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to allocate transaction");
         return NULL;
     }
 
     unsigned int flags = write ? 0 : MDB_RDONLY;
     int rc = mdb_txn_begin(db->env, NULL, flags, &txn->txn);
-    if (rc != 0) {
+    if (WTREE_UNLIKELY(rc != 0)) {
         translate_mdb_error(rc, error);
         free(txn);
         return NULL;
@@ -208,15 +217,16 @@ wtree3_txn_t* wtree3_txn_begin(wtree3_db_t *db, bool write, gerror_t *error) {
     return txn;
 }
 
+WTREE_WARN_UNUSED
 int wtree3_txn_commit(wtree3_txn_t *txn, gerror_t *error) {
-    if (!txn) {
+    if (WTREE_UNLIKELY(!txn)) {
         set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Transaction cannot be NULL");
         return WTREE3_EINVAL;
     }
 
     int rc = mdb_txn_commit(txn->txn);
     free(txn);
-    if (rc != 0) return translate_mdb_error(rc, error);
+    if (WTREE_UNLIKELY(rc != 0)) return translate_mdb_error(rc, error);
     return WTREE3_OK;
 }
 
@@ -231,28 +241,32 @@ void wtree3_txn_reset(wtree3_txn_t *txn) {
     mdb_txn_reset(txn->txn);
 }
 
+WTREE_WARN_UNUSED
 int wtree3_txn_renew(wtree3_txn_t *txn, gerror_t *error) {
-    if (!txn) {
+    if (WTREE_UNLIKELY(!txn)) {
         set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Transaction is NULL");
         return WTREE3_EINVAL;
     }
-    if (txn->is_write) {
+    if (WTREE_UNLIKELY(txn->is_write)) {
         set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Cannot renew write transaction");
         return WTREE3_EINVAL;
     }
     int rc = mdb_txn_renew(txn->txn);
-    if (rc != 0) return translate_mdb_error(rc, error);
+    if (WTREE_UNLIKELY(rc != 0)) return translate_mdb_error(rc, error);
     return WTREE3_OK;
 }
 
+WTREE_PURE
 bool wtree3_txn_is_readonly(wtree3_txn_t *txn) {
     return txn && !txn->is_write;
 }
 
+WTREE_PURE
 MDB_txn* wtree3_txn_get_mdb(wtree3_txn_t *txn) {
     return txn ? txn->txn : NULL;
 }
 
+WTREE_PURE
 wtree3_db_t* wtree3_txn_get_db(wtree3_txn_t *txn) {
     return txn ? txn->db : NULL;
 }
@@ -261,6 +275,7 @@ wtree3_db_t* wtree3_txn_get_db(wtree3_txn_t *txn) {
  * Utility Functions
  * ============================================================ */
 
+WTREE_COLD
 const char* wtree3_strerror(int error_code) {
     switch (error_code) {
         case WTREE3_OK:
@@ -286,6 +301,7 @@ const char* wtree3_strerror(int error_code) {
     }
 }
 
+WTREE_CONST
 bool wtree3_error_recoverable(int error_code) {
     return error_code == WTREE3_MAP_FULL ||
            error_code == WTREE3_TXN_FULL ||
@@ -293,13 +309,100 @@ bool wtree3_error_recoverable(int error_code) {
 }
 
 /* ============================================================
+ * Transaction Wrapper Helpers (Internal)
+ * ============================================================ */
+
+WTREE_HOT WTREE_WARN_UNUSED
+int with_write_txn(wtree3_db_t *db,
+                   int (*fn)(MDB_txn*, void*),
+                   void *user_data,
+                   gerror_t *error) {
+    if (WTREE_UNLIKELY(!db || !fn)) {
+        set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Invalid parameters");
+        return WTREE3_EINVAL;
+    }
+
+    MDB_txn *txn;
+    int rc = mdb_txn_begin(db->env, NULL, 0, &txn);
+    if (WTREE_UNLIKELY(rc != 0)) {
+        return translate_mdb_error(rc, error);
+    }
+
+    rc = fn(txn, user_data);
+    if (WTREE_UNLIKELY(rc != 0)) {
+        mdb_txn_abort(txn);
+        return rc;  /* Error already set by fn */
+    }
+
+    rc = mdb_txn_commit(txn);
+    if (WTREE_UNLIKELY(rc != 0)) {
+        return translate_mdb_error(rc, error);
+    }
+
+    return WTREE3_OK;
+}
+
+WTREE_HOT WTREE_WARN_UNUSED
+int with_read_txn(wtree3_db_t *db,
+                  int (*fn)(MDB_txn*, void*),
+                  void *user_data,
+                  gerror_t *error) {
+    if (WTREE_UNLIKELY(!db || !fn)) {
+        set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Invalid parameters");
+        return WTREE3_EINVAL;
+    }
+
+    MDB_txn *txn;
+    int rc = mdb_txn_begin(db->env, NULL, MDB_RDONLY, &txn);
+    if (WTREE_UNLIKELY(rc != 0)) {
+        return translate_mdb_error(rc, error);
+    }
+
+    rc = fn(txn, user_data);
+    mdb_txn_abort(txn);  /* Always abort read-only txn */
+
+    return rc;  /* fn's return code (error already set if needed) */
+}
+
+/* ============================================================
+ * Cursor Wrapper Helper (Internal)
+ * ============================================================ */
+
+/*
+ * Execute a function with a cursor
+ * Automatically handles cursor open/close
+ */
+WTREE_WARN_UNUSED
+int with_cursor(MDB_txn *txn, MDB_dbi dbi,
+                int (*fn)(MDB_cursor*, void*),
+                void *user_data,
+                gerror_t *error) {
+    if (WTREE_UNLIKELY(!txn || !fn)) {
+        set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Invalid parameters");
+        return WTREE3_EINVAL;
+    }
+
+    MDB_cursor *cursor;
+    int rc = mdb_cursor_open(txn, dbi, &cursor);
+    if (WTREE_UNLIKELY(rc != 0)) {
+        return translate_mdb_error(rc, error);
+    }
+
+    rc = fn(cursor, user_data);
+    mdb_cursor_close(cursor);
+
+    return rc;  /* Error already set by fn if needed */
+}
+
+/* ============================================================
  * Extractor Registry Operations
  * ============================================================ */
 
+WTREE_WARN_UNUSED
 int wtree3_db_register_key_extractor(wtree3_db_t *db, uint32_t version,
                                        uint32_t flags, wtree3_index_key_fn key_fn,
                                        gerror_t *error) {
-    if (!db || !key_fn) {
+    if (WTREE_UNLIKELY(!db || !key_fn)) {
         set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Invalid parameters");
         return WTREE3_EINVAL;
     }
@@ -308,7 +411,7 @@ int wtree3_db_register_key_extractor(wtree3_db_t *db, uint32_t version,
     uint64_t extractor_id = build_extractor_id(version, flags);
 
     /* Register in registry */
-    if (!wtree3_extractor_registry_set(db->extractor_registry, extractor_id, key_fn)) {
+    if (WTREE_UNLIKELY(!wtree3_extractor_registry_set(db->extractor_registry, extractor_id, key_fn))) {
         set_error(error, WTREE3_LIB, WTREE3_ERROR,
                  "Failed to register extractor (version=%u, flags=0x%02x)", version, flags);
         return WTREE3_ERROR;
@@ -317,6 +420,7 @@ int wtree3_db_register_key_extractor(wtree3_db_t *db, uint32_t version,
     return WTREE3_OK;
 }
 
+WTREE_PURE
 wtree3_index_key_fn find_extractor(wtree3_db_t *db, uint64_t extractor_id) {
     if (!db) return NULL;
 

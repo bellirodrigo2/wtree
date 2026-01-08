@@ -9,6 +9,7 @@
  */
 
 #include "wtree3_internal.h"
+#include "macros.h"
 
 /* Forward declarations from wtree3_index_persist.c */
 extern int save_index_metadata(wtree3_tree_t *tree, const char *index_name, gerror_t *error);
@@ -18,59 +19,184 @@ extern int save_index_metadata(wtree3_tree_t *tree, const char *index_name, gerr
  * ============================================================ */
 
 /* Build index tree name: idx:<tree_name>:<index_name> */
+WTREE_MALLOC
 char* build_index_tree_name(const char *tree_name, const char *index_name) {
     size_t len = strlen(WTREE3_INDEX_PREFIX) + strlen(tree_name) + 1 + strlen(index_name) + 1;
     char *name = malloc(len);
-    if (name) {
+    if (WTREE_LIKELY(name)) {
         snprintf(name, len, "%s%s:%s", WTREE3_INDEX_PREFIX, tree_name, index_name);
     }
     return name;
 }
 
+/* Comparison function for finding index by name */
+WTREE_PURE
+static int compare_index_by_name(const void *idx_ptr, const void *name_ptr) {
+    const wtree3_index_t *idx = (const wtree3_index_t *)idx_ptr;
+    const char *name = (const char *)name_ptr;
+    return strcmp(idx->name, name);
+}
+
 /* Find index by name */
+WTREE_HOT WTREE_PURE
 wtree3_index_t* find_index(wtree3_tree_t *tree, const char *name) {
-    for (size_t i = 0; i < tree->index_count; i++) {
-        if (strcmp(tree->indexes[i].name, name) == 0) {
-            return &tree->indexes[i];
-        }
-    }
-    return NULL;
+    if (WTREE_UNLIKELY(!tree || !name)) return NULL;
+    return (wtree3_index_t *)wvector_find(tree->indexes, name, compare_index_by_name);
 }
 
 /* Get or create metadata DBI */
 int get_metadata_dbi(wtree3_db_t *db, MDB_txn *txn, MDB_dbi *out_dbi, gerror_t *error) {
     int rc = mdb_dbi_open(txn, WTREE3_META_DB, MDB_CREATE, out_dbi);
-    if (rc != 0) {
+    if (WTREE_UNLIKELY(rc != 0)) {
         return translate_mdb_error(rc, error);
     }
     return WTREE3_OK;
 }
 
 /* Build metadata key: tree_name:index_name */
+WTREE_MALLOC
 char* build_metadata_key(const char *tree_name, const char *index_name) {
     size_t len = strlen(tree_name) + 1 + strlen(index_name) + 1;
     char *key = malloc(len);
-    if (key) {
+    if (WTREE_LIKELY(key)) {
         snprintf(key, len, "%s:%s", tree_name, index_name);
     }
     return key;
 }
 
+/* ============================================================
+ * High-Level Metadata Access Helpers
+ * ============================================================ */
+
+/*
+ * Get metadata value for an index (within existing transaction)
+ *
+ * Returns: 0 on success, WTREE3_NOT_FOUND if not found, other error codes
+ */
+int metadata_get_txn(MDB_txn *txn, wtree3_db_t *db,
+                     const char *tree_name, const char *index_name,
+                     MDB_val *out_val, gerror_t *error) {
+    MDB_dbi meta_dbi;
+    int rc = get_metadata_dbi(db, txn, &meta_dbi, error);
+    if (WTREE_UNLIKELY(rc != 0)) return rc;
+
+    char *meta_key = build_metadata_key(tree_name, index_name);
+    if (WTREE_UNLIKELY(!meta_key)) {
+        set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to build metadata key");
+        return WTREE3_ENOMEM;
+    }
+
+    MDB_val key = {.mv_size = strlen(meta_key), .mv_data = meta_key};
+    rc = mdb_get(txn, meta_dbi, &key, out_val);
+    free(meta_key);
+
+    if (WTREE_UNLIKELY(rc == MDB_NOTFOUND)) {
+        set_error(error, WTREE3_LIB, WTREE3_NOT_FOUND,
+                 "No metadata found for index '%s'", index_name);
+        return WTREE3_NOT_FOUND;
+    }
+
+    return WTREE_UNLIKELY(rc != 0) ? translate_mdb_error(rc, error) : WTREE3_OK;
+}
+
+/*
+ * Put metadata value for an index (within existing transaction)
+ *
+ * Returns: 0 on success, error code on failure
+ */
+int metadata_put_txn(MDB_txn *txn, wtree3_db_t *db,
+                     const char *tree_name, const char *index_name,
+                     const void *data, size_t data_len, gerror_t *error) {
+    MDB_dbi meta_dbi;
+    int rc = get_metadata_dbi(db, txn, &meta_dbi, error);
+    if (rc != 0) return rc;
+
+    char *meta_key = build_metadata_key(tree_name, index_name);
+    if (!meta_key) {
+        set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to build metadata key");
+        return WTREE3_ENOMEM;
+    }
+
+    MDB_val key = {.mv_size = strlen(meta_key), .mv_data = meta_key};
+    MDB_val val = {.mv_size = data_len, .mv_data = (void*)data};
+
+    rc = mdb_put(txn, meta_dbi, &key, &val, 0);
+    free(meta_key);
+
+    return rc != 0 ? translate_mdb_error(rc, error) : WTREE3_OK;
+}
+
+/*
+ * Delete metadata for an index (within existing transaction)
+ *
+ * Returns: 0 on success, error code on failure (NOTFOUND is not an error)
+ */
+int metadata_delete_txn(MDB_txn *txn, wtree3_db_t *db,
+                        const char *tree_name, const char *index_name,
+                        gerror_t *error) {
+    MDB_dbi meta_dbi;
+    int rc = get_metadata_dbi(db, txn, &meta_dbi, NULL);
+    if (rc != 0) return WTREE3_OK;  /* No metadata DB = nothing to delete */
+
+    char *meta_key = build_metadata_key(tree_name, index_name);
+    if (!meta_key) {
+        /* Don't fail delete operation due to memory allocation */
+        return WTREE3_OK;
+    }
+
+    MDB_val key = {.mv_size = strlen(meta_key), .mv_data = meta_key};
+    rc = mdb_del(txn, meta_dbi, &key, NULL);
+    free(meta_key);
+
+    /* NOTFOUND is fine for delete operations */
+    if (rc == MDB_NOTFOUND) {
+        return WTREE3_OK;
+    }
+
+    return rc != 0 ? translate_mdb_error(rc, error) : WTREE3_OK;
+}
+
+
+/* ============================================================
+ * Index Management - Helper Transaction Functions
+ * ============================================================ */
+
+/* Helper context for creating index DBI */
+typedef struct {
+    const char *tree_name;
+    MDB_dbi *out_dbi;
+    MDB_cmp_func *compare;
+} create_index_ctx_t;
+
+static int create_index_txn(MDB_txn *txn, void *user_data) {
+    create_index_ctx_t *ctx = (create_index_ctx_t *)user_data;
+    int rc = mdb_dbi_open(txn, ctx->tree_name, MDB_CREATE | MDB_DUPSORT, ctx->out_dbi);
+    if (rc != 0) return rc;
+
+    /* Set custom comparator if provided */
+    if (ctx->compare) {
+        rc = mdb_set_compare(txn, *ctx->out_dbi, ctx->compare);
+        if (rc != 0) return rc;
+    }
+
+    return WTREE3_OK;
+}
 
 /* ============================================================
  * Index Management
  * ============================================================ */
 
+WTREE_WARN_UNUSED
 int wtree3_tree_add_index(wtree3_tree_t *tree,
                            const wtree3_index_config_t *config,
                            gerror_t *error) {
-    if (!tree || !config || !config->name) {
+    if (WTREE_UNLIKELY(!tree || !config || !config->name)) {
         set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Invalid parameters");
         return WTREE3_EINVAL;
     }
 
     /* Check if index already exists */
-    if (find_index(tree, config->name)) {
+    if (WTREE_UNLIKELY(find_index(tree, config->name))) {
         set_error(error, WTREE3_LIB, WTREE3_KEY_EXISTS,
                  "Index '%s' already exists", config->name);
         return WTREE3_KEY_EXISTS;
@@ -82,71 +208,52 @@ int wtree3_tree_add_index(wtree3_tree_t *tree,
 
     /* Look up extractor function from registry */
     wtree3_index_key_fn key_fn = find_extractor(tree->db, extractor_id);
-    if (!key_fn) {
+    if (WTREE_UNLIKELY(!key_fn)) {
         set_error(error, WTREE3_LIB, WTREE3_EINVAL,
                  "No extractor registered for version=%u flags=0x%02x",
                  tree->db->version, flags);
         return WTREE3_EINVAL;
     }
 
-    /* Expand array if needed */
-    if (tree->index_count >= tree->index_capacity) {
-        size_t new_capacity = tree->index_capacity * 2;
-        wtree3_index_t *new_indexes = realloc(tree->indexes,
-                                               new_capacity * sizeof(wtree3_index_t));
-        if (!new_indexes) {
-            set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to expand index array");
-            return WTREE3_ENOMEM;
-        }
-        tree->indexes = new_indexes;
-        tree->index_capacity = new_capacity;
-    }
-
     /* Build index tree name */
     char *idx_tree_name = build_index_tree_name(tree->name, config->name);
-    if (!idx_tree_name) {
+    if (WTREE_UNLIKELY(!idx_tree_name)) {
         set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to allocate tree name");
         return WTREE3_ENOMEM;
     }
 
     /* Create index DBI with DUPSORT */
-    MDB_txn *txn;
-    int rc = mdb_txn_begin(tree->db->env, NULL, 0, &txn);
-    if (rc != 0) {
-        free(idx_tree_name);
-        return translate_mdb_error(rc, error);
-    }
-
     MDB_dbi idx_dbi;
-    rc = mdb_dbi_open(txn, idx_tree_name, MDB_CREATE | MDB_DUPSORT, &idx_dbi);
-    if (rc != 0) {
-        mdb_txn_abort(txn);
-        free(idx_tree_name);
-        return translate_mdb_error(rc, error);
+    create_index_ctx_t ctx = {
+        .tree_name = idx_tree_name,
+        .out_dbi = &idx_dbi,
+        .compare = config->compare
+    };
+
+    int rc = with_write_txn(tree->db, create_index_txn, &ctx, error);
+    if (WTREE_UNLIKELY(rc != 0)) {
+        goto cleanup_tree_name;
     }
 
-    /* Set custom comparator if provided */
-    if (config->compare) {
-        rc = mdb_set_compare(txn, idx_dbi, config->compare);
-        if (rc != 0) {
-            mdb_txn_abort(txn);
-            free(idx_tree_name);
-            return translate_mdb_error(rc, error);
-        }
+    /* Allocate new index on heap */
+    wtree3_index_t *idx = calloc(1, sizeof(wtree3_index_t));
+    if (!idx) {
+        set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to allocate index");
+        rc = WTREE3_ENOMEM;
+        goto cleanup_tree_name;
     }
 
-    rc = mdb_txn_commit(txn);
-    if (rc != 0) {
-        free(idx_tree_name);
-        return translate_mdb_error(rc, error);
-    }
-
-    /* Add to index array */
-    wtree3_index_t *idx = &tree->indexes[tree->index_count];
+    /* Initialize index structure */
     idx->name = strdup(config->name);
+    if (!idx->name) {
+        set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to allocate index name");
+        rc = WTREE3_ENOMEM;
+        goto cleanup_idx;
+    }
+
     idx->tree_name = idx_tree_name;
     idx->dbi = idx_dbi;
-    idx->extractor_id = extractor_id;  /* Generated from db->version + flags */
+    idx->extractor_id = extractor_id;
     idx->key_fn = key_fn;
     idx->unique = config->unique;
     idx->sparse = config->sparse;
@@ -156,53 +263,62 @@ int wtree3_tree_add_index(wtree3_tree_t *tree,
     if (config->user_data && config->user_data_len > 0) {
         idx->user_data = malloc(config->user_data_len);
         if (!idx->user_data) {
-            free(idx->name);
-            free(idx_tree_name);
             set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to allocate user_data");
-            return WTREE3_ENOMEM;
+            rc = WTREE3_ENOMEM;
+            goto cleanup_idx_name;
         }
         memcpy(idx->user_data, config->user_data, config->user_data_len);
         idx->user_data_len = config->user_data_len;
-    } else {
-        idx->user_data = NULL;
-        idx->user_data_len = 0;
     }
 
-    if (!idx->name) {
-        free(idx->user_data);
-        free(idx_tree_name);
-        set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to allocate index name");
-        return WTREE3_ENOMEM;
+    /* Add to vector */
+    if (!wvector_push(tree->indexes, idx)) {
+        set_error(error, WTREE3_LIB, WTREE3_ENOMEM, "Failed to add index to vector");
+        rc = WTREE3_ENOMEM;
+        goto cleanup_user_data;
     }
 
-    tree->index_count++;
-
-    /* Save metadata (always - metadata is now always persisted) */
+    /* Save metadata (always persisted) */
     rc = save_index_metadata(tree, config->name, error);
     if (rc != 0) {
-        /* Failed to save metadata - roll back */
-        tree->index_count--;
-        free(idx->user_data);
-        free(idx->name);
-        free(idx->tree_name);
-
-        /* Drop the index tree */
-        MDB_txn *drop_txn;
-        if (mdb_txn_begin(tree->db->env, NULL, 0, &drop_txn) == 0) {
-            mdb_drop(drop_txn, idx->dbi, 1);
-            mdb_txn_commit(drop_txn);
-        }
-
-        return rc;
+        goto rollback_vector;
     }
 
     return WTREE3_OK;
+
+    /* Cleanup paths in reverse order of allocation */
+rollback_vector:
+    /* Roll back by removing from vector (calls cleanup_index via wvector) */
+    wvector_pop(tree->indexes);
+    /* Drop the index tree */
+    {
+        MDB_txn *drop_txn;
+        if (mdb_txn_begin(tree->db->env, NULL, 0, &drop_txn) == 0) {
+            mdb_drop(drop_txn, idx_dbi, 1);
+            mdb_txn_commit(drop_txn);
+        }
+    }
+    return rc;
+
+cleanup_user_data:
+    free(idx->user_data);
+cleanup_idx_name:
+    free(idx->name);
+cleanup_idx:
+    free(idx_tree_name);
+    free(idx);
+    return rc;
+
+cleanup_tree_name:
+    free(idx_tree_name);
+    return rc;
 }
 
+WTREE_COLD WTREE_WARN_UNUSED
 int wtree3_tree_populate_index(wtree3_tree_t *tree,
                                 const char *index_name,
                                 gerror_t *error) {
-    if (!tree || !index_name) {
+    if (WTREE_UNLIKELY(!tree || !index_name)) {
         set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Invalid parameters");
         return WTREE3_EINVAL;
     }
@@ -282,89 +398,91 @@ int wtree3_tree_populate_index(wtree3_tree_t *tree,
     return WTREE3_OK;
 }
 
+/* Helper context for drop_index transaction */
+typedef struct {
+    wtree3_tree_t *tree;
+    const char *index_name;
+    MDB_dbi idx_dbi;
+} drop_index_ctx_t;
+
+static int drop_index_txn(MDB_txn *txn, void *user_data) {
+    drop_index_ctx_t *ctx = (drop_index_ctx_t *)user_data;
+
+    /* Drop the index tree */
+    int rc = mdb_drop(txn, ctx->idx_dbi, 1);
+    if (rc != 0 && rc != MDB_NOTFOUND) {
+        return rc;
+    }
+
+    return WTREE3_OK;
+}
+
+static int drop_index_metadata_txn(MDB_txn *txn, void *user_data) {
+    drop_index_ctx_t *ctx = (drop_index_ctx_t *)user_data;
+    return metadata_delete_txn(txn, ctx->tree->db, ctx->tree->name,
+                               ctx->index_name, NULL);
+}
+
+WTREE_COLD WTREE_WARN_UNUSED
 int wtree3_tree_drop_index(wtree3_tree_t *tree,
                             const char *index_name,
                             gerror_t *error) {
-    if (!tree || !index_name) {
+    if (WTREE_UNLIKELY(!tree || !index_name)) {
         set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Invalid parameters");
         return WTREE3_EINVAL;
     }
 
     /* Find index */
-    size_t idx_pos = 0;
-    wtree3_index_t *idx = NULL;
-    for (size_t i = 0; i < tree->index_count; i++) {
-        if (strcmp(tree->indexes[i].name, index_name) == 0) {
-            idx = &tree->indexes[i];
-            idx_pos = i;
-            break;
-        }
-    }
-
+    wtree3_index_t *idx = find_index(tree, index_name);
     if (!idx) {
         set_error(error, WTREE3_LIB, WTREE3_NOT_FOUND,
                  "Index '%s' not found", index_name);
         return WTREE3_NOT_FOUND;
     }
 
+    /* Save context before removing from vector */
+    drop_index_ctx_t ctx = {
+        .tree = tree,
+        .index_name = index_name,
+        .idx_dbi = idx->dbi
+    };
+
     /* Delete the index tree */
-    MDB_txn *txn;
-    int rc = mdb_txn_begin(tree->db->env, NULL, 0, &txn);
-    if (rc != 0) return translate_mdb_error(rc, error);
+    int rc = with_write_txn(tree->db, drop_index_txn, &ctx, error);
+    if (rc != 0) return rc;
 
-    rc = mdb_drop(txn, idx->dbi, 1);
-    if (rc != 0 && rc != MDB_NOTFOUND) {
-        mdb_txn_abort(txn);
-        return translate_mdb_error(rc, error);
+    /* Delete metadata (ignore errors - metadata might not exist) */
+    rc = with_write_txn(tree->db, drop_index_metadata_txn, &ctx, NULL);
+    (void)rc;
+
+    /* Remove from vector (this will call cleanup_index automatically) */
+    if (!wvector_remove(tree->indexes, index_name, compare_index_by_name)) {
+        set_error(error, WTREE3_LIB, WTREE3_ERROR, "Failed to remove index from vector");
+        return WTREE3_ERROR;
     }
-
-    rc = mdb_txn_commit(txn);
-    if (rc != 0) return translate_mdb_error(rc, error);
-
-    /* Delete metadata */
-    rc = mdb_txn_begin(tree->db->env, NULL, 0, &txn);
-    if (rc == 0) {
-        MDB_dbi meta_dbi;
-        if (get_metadata_dbi(tree->db, txn, &meta_dbi, NULL) == 0) {
-            char *meta_key = build_metadata_key(tree->name, index_name);
-            if (meta_key) {
-                MDB_val key = {.mv_size = strlen(meta_key), .mv_data = meta_key};
-                mdb_del(txn, meta_dbi, &key, NULL);
-                free(meta_key);
-            }
-        }
-        mdb_txn_commit(txn);
-    }
-
-    /* Free index entry */
-    free(idx->user_data);
-    free(idx->name);
-    free(idx->tree_name);
-
-    /* Remove from array by shifting */
-    for (size_t i = idx_pos; i < tree->index_count - 1; i++) {
-        tree->indexes[i] = tree->indexes[i + 1];
-    }
-    tree->index_count--;
 
     return WTREE3_OK;
 }
 
+WTREE_PURE
 bool wtree3_tree_has_index(wtree3_tree_t *tree, const char *index_name) {
     return tree && index_name && find_index(tree, index_name) != NULL;
 }
 
+WTREE_PURE
 size_t wtree3_tree_index_count(wtree3_tree_t *tree) {
-    return tree ? tree->index_count : 0;
+    return tree ? wvector_size(tree->indexes) : 0;
 }
 
+WTREE_COLD WTREE_WARN_UNUSED
 int wtree3_verify_indexes(wtree3_tree_t *tree, gerror_t *error) {
-    if (!tree) {
+    if (WTREE_UNLIKELY(!tree)) {
         set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Tree cannot be NULL");
         return WTREE3_EINVAL;
     }
 
-    if (tree->index_count == 0) {
+    size_t index_count = wvector_size(tree->indexes);
+    if (index_count == 0) {
         return WTREE3_OK;  // No indexes to verify
     }
 
@@ -386,8 +504,8 @@ int wtree3_verify_indexes(wtree3_tree_t *tree, gerror_t *error) {
 
     while (rc == 0) {
         // For each main entry, check it appears in all applicable indexes
-        for (size_t i = 0; i < tree->index_count; i++) {
-            wtree3_index_t *idx = &tree->indexes[i];
+        for (size_t i = 0; i < index_count; i++) {
+            wtree3_index_t *idx = (wtree3_index_t *)wvector_get(tree->indexes, i);
 
             // Extract index key
             void *idx_key = NULL;
@@ -482,8 +600,8 @@ int wtree3_verify_indexes(wtree3_tree_t *tree, gerror_t *error) {
     mdb_cursor_close(main_cursor);
 
     // Phase 2: Verify all index entries point to valid main tree entries
-    for (size_t i = 0; i < tree->index_count; i++) {
-        wtree3_index_t *idx = &tree->indexes[i];
+    for (size_t i = 0; i < index_count; i++) {
+        wtree3_index_t *idx = (wtree3_index_t *)wvector_get(tree->indexes, i);
 
         MDB_cursor *idx_cursor;
         rc = mdb_cursor_open(txn, idx->dbi, &idx_cursor);

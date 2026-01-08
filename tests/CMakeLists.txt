@@ -84,36 +84,11 @@ target_include_directories(test_wtree3_coverage PRIVATE ${cmocka_SOURCE_DIR}/inc
 target_link_libraries(test_wtree3_coverage PRIVATE wtree3 ${CMOCKA_LIBRARY})
 add_test(NAME test_wtree3_coverage COMMAND test_wtree3_coverage)
 
-# Test for wtree3 persistence and metadata operations
-# DISABLED: test_wtree3_persistence - old API needs complete rewrite
-# add_executable(test_wtree3_persistence test_wtree3_persistence.c)
-# target_include_directories(test_wtree3_persistence PRIVATE ${cmocka_SOURCE_DIR}/include)
-# target_link_libraries(test_wtree3_persistence PRIVATE wtree3 ${CMOCKA_LIBRARY})
-# add_test(NAME test_wtree3_persistence COMMAND test_wtree3_persistence)
-
 # Test for wtree3 critical bugs (Phase 1 bug fixes)
 add_executable(test_wtree3_bugs test_wtree3_bugs.c)
 target_include_directories(test_wtree3_bugs PRIVATE ${cmocka_SOURCE_DIR}/include)
 target_link_libraries(test_wtree3_bugs PRIVATE wtree3 ${CMOCKA_LIBRARY})
 add_test(NAME test_wtree3_bugs COMMAND test_wtree3_bugs)
-
-# Test for wbuffer module
-add_executable(test_wbuffer test_wbuffer.c)
-target_include_directories(test_wbuffer PRIVATE ${cmocka_SOURCE_DIR}/include)
-target_link_libraries(test_wbuffer PRIVATE wqueue ${CMOCKA_LIBRARY})
-add_test(NAME test_wbuffer COMMAND test_wbuffer)
-
-# Test for wqueue module (new simplified implementation)
-add_executable(test_wqueue test_wqueue.c)
-target_include_directories(test_wqueue PRIVATE ${cmocka_SOURCE_DIR}/include)
-target_link_libraries(test_wqueue PRIVATE wqueue ${CMOCKA_LIBRARY})
-add_test(NAME test_wqueue COMMAND test_wqueue)
-
-# Test for wqueue MPSC multithreaded tests
-add_executable(test_wqueue_mpsc test_wqueue_mpsc.c)
-target_include_directories(test_wqueue_mpsc PRIVATE ${cmocka_SOURCE_DIR}/include)
-target_link_libraries(test_wqueue_mpsc PRIVATE wqueue ${CMOCKA_LIBRARY})
-add_test(NAME test_wqueue_mpsc COMMAND test_wqueue_mpsc)
 
 # Test for wvector module (generic dynamic array)
 add_executable(test_wvector test_wvector.c)
@@ -145,11 +120,7 @@ if(WIN32)
     target_compile_definitions(test_wtree3_tier1 PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wtree3_tier2 PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wtree3_coverage PRIVATE _CRT_SECURE_NO_WARNINGS)
-    # target_compile_definitions(test_wtree3_persistence PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wtree3_bugs PRIVATE _CRT_SECURE_NO_WARNINGS)
-    target_compile_definitions(test_wbuffer PRIVATE _CRT_SECURE_NO_WARNINGS)
-    target_compile_definitions(test_wqueue PRIVATE _CRT_SECURE_NO_WARNINGS)
-    target_compile_definitions(test_wqueue_mpsc PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wvector PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wtree3_extractor_registry PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wtree3_persistence_new PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -225,39 +196,10 @@ if(WIN32)
         COMMENT "Copying cmocka DLL to test directory"
     )
 
-    # DISABLED: test_wtree3_persistence
-    # add_custom_command(TARGET test_wtree3_persistence POST_BUILD
-    #    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    #        $<TARGET_FILE:cmocka>
-    #        $<TARGET_FILE_DIR:test_wtree3_persistence>
-    #    COMMENT "Copying cmocka DLL to test directory"
-    # )
-
     add_custom_command(TARGET test_wtree3_bugs POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:cmocka>
             $<TARGET_FILE_DIR:test_wtree3_bugs>
-        COMMENT "Copying cmocka DLL to test directory"
-    )
-
-    add_custom_command(TARGET test_wbuffer POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:cmocka>
-            $<TARGET_FILE_DIR:test_wbuffer>
-        COMMENT "Copying cmocka DLL to test directory"
-    )
-
-    add_custom_command(TARGET test_wqueue POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:cmocka>
-            $<TARGET_FILE_DIR:test_wqueue>
-        COMMENT "Copying cmocka DLL to test directory"
-    )
-
-    add_custom_command(TARGET test_wqueue_mpsc POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:cmocka>
-            $<TARGET_FILE_DIR:test_wqueue_mpsc>
         COMMENT "Copying cmocka DLL to test directory"
     )
 
@@ -355,35 +297,10 @@ if(WIN32)
                         $<TARGET_FILE_DIR:test_wtree3_coverage>
                     COMMENT "Copying ${DLL}"
                 )
-                # DISABLED: test_wtree3_persistence
-                # add_custom_command(TARGET test_wtree3_persistence POST_BUILD
-                #    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                #        ${DLL}
-                #        $<TARGET_FILE_DIR:test_wtree3_persistence>
-                #    COMMENT "Copying ${DLL}"
-                # )
                 add_custom_command(TARGET test_wtree3_bugs POST_BUILD
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                         ${DLL}
                         $<TARGET_FILE_DIR:test_wtree3_bugs>
-                    COMMENT "Copying ${DLL}"
-                )
-                add_custom_command(TARGET test_wbuffer POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        ${DLL}
-                        $<TARGET_FILE_DIR:test_wbuffer>
-                    COMMENT "Copying ${DLL}"
-                )
-                add_custom_command(TARGET test_wqueue POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        ${DLL}
-                        $<TARGET_FILE_DIR:test_wqueue>
-                    COMMENT "Copying ${DLL}"
-                )
-                add_custom_command(TARGET test_wqueue_mpsc POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        ${DLL}
-                        $<TARGET_FILE_DIR:test_wqueue_mpsc>
                     COMMENT "Copying ${DLL}"
                 )
                 add_custom_command(TARGET test_wvector POST_BUILD
