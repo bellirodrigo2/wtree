@@ -201,6 +201,7 @@ typedef struct wtree3_index_config {
     bool unique;                /* Unique constraint */
     bool sparse;                /* Skip entries where key_fn returns false */
     MDB_cmp_func *compare;      /* Custom key comparator (NULL for default) */
+    MDB_cmp_func *dupsort_compare; /* Custom duplicate value comparator (NULL for default, only for non-unique indexes) */
 } wtree3_index_config_t;
 
 /* Key-Value pair for batch operations */

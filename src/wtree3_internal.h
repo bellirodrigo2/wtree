@@ -67,7 +67,8 @@ typedef struct wtree3_index {
     size_t user_data_len;           /* Length of user_data */
     bool unique;                    /* Unique constraint */
     bool sparse;                    /* Sparse index */
-    MDB_cmp_func *compare;          /* Custom comparator */
+    MDB_cmp_func *compare;          /* Custom key comparator */
+    MDB_cmp_func *dupsort_compare;  /* Custom duplicate value comparator */
 } wtree3_index_t;
 
 /* Tree handle with index support */

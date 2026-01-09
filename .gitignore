@@ -10,6 +10,7 @@ MinSizeRel/
 RelWithDebInfo/
 
 todo
+run_coverage.py
 
 # Test and benchmark folders
 test_*/

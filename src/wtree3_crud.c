@@ -208,27 +208,33 @@ int wtree3_upsert_txn(wtree3_txn_t *txn, wtree3_tree_t *tree,
         return WTREE3_EINVAL;
     }
 
-    /* Check if key exists */
-    MDB_val mkey = {.mv_size = key_len, .mv_data = (void*)key};
-    MDB_val old_val;
-    int rc = mdb_get(txn->txn, tree->dbi, &mkey, &old_val);
+    /* Try insert first - if key doesn't exist, we're done */
+    int rc = wtree3_insert_one_txn(txn, tree, key, key_len, value, value_len, error);
 
-    if (rc == MDB_NOTFOUND) {
-        /* Key doesn't exist - perform insert */
-        return wtree3_insert_one_txn(txn, tree, key, key_len, value, value_len, error);
-    } else if (rc != 0) {
-        return translate_mdb_error(rc, error);
+    if (rc == WTREE3_OK) {
+        /* Insert succeeded - key didn't exist */
+        return WTREE3_OK;
     }
 
-    /* Key exists - need to merge or overwrite */
-    const void *final_value = value;
-    size_t final_value_len = value_len;
-    void *merged_value = NULL;
+    if (rc != WTREE3_KEY_EXISTS) {
+        /* Some other error occurred */
+        return rc;
+    }
 
+    /* Key exists - need to handle merge (if callback exists) or just update */
     if (tree->merge_fn) {
+        /* Get old value for merge */
+        MDB_val mkey = {.mv_size = key_len, .mv_data = (void*)key};
+        MDB_val old_val;
+        rc = mdb_get(txn->txn, tree->dbi, &mkey, &old_val);
+
+        if (WTREE_UNLIKELY(rc != 0)) {
+            return translate_mdb_error(rc, error);
+        }
+
         /* Call merge callback */
         size_t merged_len;
-        merged_value = tree->merge_fn(
+        void *merged_value = tree->merge_fn(
             old_val.mv_data, old_val.mv_size,
             value, value_len,
             tree->merge_user_data,
@@ -240,34 +246,14 @@ int wtree3_upsert_txn(wtree3_txn_t *txn, wtree3_tree_t *tree,
             return WTREE3_ERROR;
         }
 
-        final_value = merged_value;
-        final_value_len = merged_len;
-    }
-
-    /* Delete old index entries */
-    rc = indexes_delete(tree, txn->txn, key, key_len, old_val.mv_data, old_val.mv_size, error);
-    if (rc != 0) {
+        /* Update with merged value */
+        rc = wtree3_update_txn(txn, tree, key, key_len, merged_value, merged_len, error);
         free(merged_value);
         return rc;
     }
 
-    /* Insert new index entries */
-    rc = indexes_insert(tree, txn->txn, key, key_len, final_value, final_value_len, error);
-    if (rc != 0) {
-        free(merged_value);
-        return rc;
-    }
-
-    /* Update main tree */
-    MDB_val mval = {.mv_size = final_value_len, .mv_data = (void*)final_value};
-    rc = mdb_put(txn->txn, tree->dbi, &mkey, &mval, 0);
-
-    free(merged_value);
-
-    if (rc != 0) return translate_mdb_error(rc, error);
-
-    /* Note: entry_count doesn't change (key already existed) */
-    return WTREE3_OK;
+    /* No merge function - just update with new value */
+    return wtree3_update_txn(txn, tree, key, key_len, value, value_len, error);
 }
 
 WTREE_HOT WTREE_WARN_UNUSED

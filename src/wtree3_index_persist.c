@@ -347,6 +347,7 @@ int load_index_metadata(wtree3_tree_t *tree, const char *index_name, gerror_t *e
     idx->unique = meta_ctx.unique;
     idx->sparse = meta_ctx.sparse;
     idx->compare = NULL;  /* Not persisted */
+    idx->dupsort_compare = NULL;  /* Not persisted */
 
     /* Add to vector */
     if (!wvector_push(tree->indexes, idx)) {

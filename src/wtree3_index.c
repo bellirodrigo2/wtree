@@ -166,6 +166,7 @@ typedef struct {
     const char *tree_name;
     MDB_dbi *out_dbi;
     MDB_cmp_func *compare;
+    MDB_cmp_func *dupsort_compare;
 } create_index_ctx_t;
 
 static int create_index_txn(MDB_txn *txn, void *user_data) {
@@ -173,9 +174,15 @@ static int create_index_txn(MDB_txn *txn, void *user_data) {
     int rc = mdb_dbi_open(txn, ctx->tree_name, MDB_CREATE | MDB_DUPSORT, ctx->out_dbi);
     if (rc != 0) return rc;
 
-    /* Set custom comparator if provided */
+    /* Set custom key comparator if provided */
     if (ctx->compare) {
         rc = mdb_set_compare(txn, *ctx->out_dbi, ctx->compare);
+        if (rc != 0) return rc;
+    }
+
+    /* Set custom duplicate value comparator if provided */
+    if (ctx->dupsort_compare) {
+        rc = mdb_set_dupsort(txn, *ctx->out_dbi, ctx->dupsort_compare);
         if (rc != 0) return rc;
     }
 
@@ -227,7 +234,8 @@ int wtree3_tree_add_index(wtree3_tree_t *tree,
     create_index_ctx_t ctx = {
         .tree_name = idx_tree_name,
         .out_dbi = &idx_dbi,
-        .compare = config->compare
+        .compare = config->compare,
+        .dupsort_compare = config->dupsort_compare
     };
 
     int rc = with_write_txn(tree->db, create_index_txn, &ctx, error);
@@ -258,6 +266,7 @@ int wtree3_tree_add_index(wtree3_tree_t *tree,
     idx->unique = config->unique;
     idx->sparse = config->sparse;
     idx->compare = config->compare;
+    idx->dupsort_compare = config->dupsort_compare;
 
     /* Copy user_data if provided */
     if (config->user_data && config->user_data_len > 0) {

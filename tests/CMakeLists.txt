@@ -132,6 +132,12 @@ target_include_directories(test_wtree3_param_validation PRIVATE ${cmocka_SOURCE_
 target_link_libraries(test_wtree3_param_validation PRIVATE wtree3 ${CMOCKA_LIBRARY})
 add_test(NAME test_wtree3_param_validation COMMAND test_wtree3_param_validation)
 
+# Test for wtree3 custom dupsort comparison on non-unique indexes
+add_executable(test_wtree3_dupsort test_wtree3_dupsort.c)
+target_include_directories(test_wtree3_dupsort PRIVATE ${cmocka_SOURCE_DIR}/include)
+target_link_libraries(test_wtree3_dupsort PRIVATE wtree3 ${CMOCKA_LIBRARY})
+add_test(NAME test_wtree3_dupsort COMMAND test_wtree3_dupsort)
+
 # Platform-specific settings
 if(WIN32)
     target_compile_definitions(test_gerror PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -152,6 +158,7 @@ if(WIN32)
     target_compile_definitions(test_wtree3_full_integration PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wtree3_edge_cases PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wtree3_param_validation PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(test_wtree3_dupsort PRIVATE _CRT_SECURE_NO_WARNINGS)
 
     # Copy cmocka DLL to test directory on Windows
     add_custom_command(TARGET test_gerror POST_BUILD
@@ -280,6 +287,13 @@ if(WIN32)
         COMMENT "Copying cmocka DLL to test directory"
     )
 
+    add_custom_command(TARGET test_wtree3_dupsort POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:cmocka>
+            $<TARGET_FILE_DIR:test_wtree3_dupsort>
+        COMMENT "Copying cmocka DLL to test directory"
+    )
+
     # For MinGW builds, copy required runtime DLLs
     if(MINGW)
         # Find MinGW bin directory
@@ -399,6 +413,12 @@ if(WIN32)
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                         ${DLL}
                         $<TARGET_FILE_DIR:test_wtree3_param_validation>
+                    COMMENT "Copying ${DLL}"
+                )
+                add_custom_command(TARGET test_wtree3_dupsort POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        ${DLL}
+                        $<TARGET_FILE_DIR:test_wtree3_dupsort>
                     COMMENT "Copying ${DLL}"
                 )
             endif()

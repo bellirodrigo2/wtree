@@ -722,9 +722,9 @@ static void test_update_creates_new_entry(void **state) {
     wtree3_tree_t *tree = wtree3_tree_open(test_db, "update_new_test", 0, 0, &error);
     assert_non_null(tree);
 
-    // Update creates entry if it doesn't exist (upsert behavior)
+    // Update should return NOT_FOUND if key doesn't exist
     int rc = wtree3_update(tree, "newkey", 6, "newval", 6, &error);
-    assert_int_equal(WTREE3_OK, rc);
+    assert_int_equal(WTREE3_NOT_FOUND, rc);
 
     wtree3_tree_close(tree);
 }
