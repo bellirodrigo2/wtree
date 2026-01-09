@@ -97,6 +97,7 @@ add_library(wtree3 STATIC
     src/wtree3_crud.c
     src/wtree3_iterator.c
     src/wtree3_scan.c
+    src/wtree3_memopt.c
 )
 
 target_include_directories(wtree3 PUBLIC

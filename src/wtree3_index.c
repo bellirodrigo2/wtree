@@ -190,7 +190,7 @@ WTREE_WARN_UNUSED
 int wtree3_tree_add_index(wtree3_tree_t *tree,
                            const wtree3_index_config_t *config,
                            gerror_t *error) {
-    if (WTREE_UNLIKELY(!tree || !config || !config->name)) {
+    if (WTREE_UNLIKELY(!tree || !config || !config->name || config->name[0] == '\0')) {
         set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Invalid parameters");
         return WTREE3_EINVAL;
     }

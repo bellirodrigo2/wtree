@@ -28,6 +28,24 @@
 #endif
 
 /* ============================================================
+ * OS Detection
+ * ============================================================ */
+
+#if defined(_WIN32) || defined(_WIN64) || defined(__WIN32__)
+    #define WTREE_OS_WINDOWS 1
+    #define WTREE_OS_POSIX 0
+#elif defined(__linux__) || defined(__unix__) || defined(__APPLE__) || \
+      defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || \
+      defined(__sun)
+    #define WTREE_OS_POSIX 1
+    #define WTREE_OS_WINDOWS 0
+#else
+    /* Unknown platform - disable memory optimizations */
+    #define WTREE_OS_POSIX 0
+    #define WTREE_OS_WINDOWS 0
+#endif
+
+/* ============================================================
  * Branch Prediction Hints
  * ============================================================ */
 

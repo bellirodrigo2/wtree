@@ -108,6 +108,30 @@ target_include_directories(test_wtree3_persistence_new PRIVATE ${cmocka_SOURCE_D
 target_link_libraries(test_wtree3_persistence_new PRIVATE wtree3 ${CMOCKA_LIBRARY})
 add_test(NAME test_wtree3_persistence_new COMMAND test_wtree3_persistence_new)
 
+# Test for wtree3 memory optimization API
+add_executable(test_wtree3_memopt test_wtree3_memopt.c)
+target_include_directories(test_wtree3_memopt PRIVATE ${cmocka_SOURCE_DIR}/include)
+target_link_libraries(test_wtree3_memopt PRIVATE wtree3 ${CMOCKA_LIBRARY})
+add_test(NAME test_wtree3_memopt COMMAND test_wtree3_memopt)
+
+# Test for wtree3 full integration (comprehensive end-to-end test)
+add_executable(test_wtree3_full_integration test_wtree3_full_integration.c)
+target_include_directories(test_wtree3_full_integration PRIVATE ${cmocka_SOURCE_DIR}/include)
+target_link_libraries(test_wtree3_full_integration PRIVATE wtree3 ${CMOCKA_LIBRARY})
+add_test(NAME test_wtree3_full_integration COMMAND test_wtree3_full_integration)
+
+# Test for wtree3 edge cases (error paths, custom comparators, advanced scenarios)
+add_executable(test_wtree3_edge_cases test_wtree3_edge_cases.c)
+target_include_directories(test_wtree3_edge_cases PRIVATE ${cmocka_SOURCE_DIR}/include)
+target_link_libraries(test_wtree3_edge_cases PRIVATE wtree3 ${CMOCKA_LIBRARY})
+add_test(NAME test_wtree3_edge_cases COMMAND test_wtree3_edge_cases)
+
+# Test for wtree3 parameter validation (NULL checks, boundary tests, database full)
+add_executable(test_wtree3_param_validation test_wtree3_param_validation.c)
+target_include_directories(test_wtree3_param_validation PRIVATE ${cmocka_SOURCE_DIR}/include)
+target_link_libraries(test_wtree3_param_validation PRIVATE wtree3 ${CMOCKA_LIBRARY})
+add_test(NAME test_wtree3_param_validation COMMAND test_wtree3_param_validation)
+
 # Platform-specific settings
 if(WIN32)
     target_compile_definitions(test_gerror PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -124,6 +148,10 @@ if(WIN32)
     target_compile_definitions(test_wvector PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wtree3_extractor_registry PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wtree3_persistence_new PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(test_wtree3_memopt PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(test_wtree3_full_integration PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(test_wtree3_edge_cases PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(test_wtree3_param_validation PRIVATE _CRT_SECURE_NO_WARNINGS)
 
     # Copy cmocka DLL to test directory on Windows
     add_custom_command(TARGET test_gerror POST_BUILD
@@ -224,6 +252,34 @@ if(WIN32)
         COMMENT "Copying cmocka DLL to test directory"
     )
 
+    add_custom_command(TARGET test_wtree3_memopt POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:cmocka>
+            $<TARGET_FILE_DIR:test_wtree3_memopt>
+        COMMENT "Copying cmocka DLL to test directory"
+    )
+
+    add_custom_command(TARGET test_wtree3_full_integration POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:cmocka>
+            $<TARGET_FILE_DIR:test_wtree3_full_integration>
+        COMMENT "Copying cmocka DLL to test directory"
+    )
+
+    add_custom_command(TARGET test_wtree3_edge_cases POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:cmocka>
+            $<TARGET_FILE_DIR:test_wtree3_edge_cases>
+        COMMENT "Copying cmocka DLL to test directory"
+    )
+
+    add_custom_command(TARGET test_wtree3_param_validation POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:cmocka>
+            $<TARGET_FILE_DIR:test_wtree3_param_validation>
+        COMMENT "Copying cmocka DLL to test directory"
+    )
+
     # For MinGW builds, copy required runtime DLLs
     if(MINGW)
         # Find MinGW bin directory
@@ -319,6 +375,30 @@ if(WIN32)
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                         ${DLL}
                         $<TARGET_FILE_DIR:test_wtree3_persistence_new>
+                    COMMENT "Copying ${DLL}"
+                )
+                add_custom_command(TARGET test_wtree3_memopt POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        ${DLL}
+                        $<TARGET_FILE_DIR:test_wtree3_memopt>
+                    COMMENT "Copying ${DLL}"
+                )
+                add_custom_command(TARGET test_wtree3_full_integration POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        ${DLL}
+                        $<TARGET_FILE_DIR:test_wtree3_full_integration>
+                    COMMENT "Copying ${DLL}"
+                )
+                add_custom_command(TARGET test_wtree3_edge_cases POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        ${DLL}
+                        $<TARGET_FILE_DIR:test_wtree3_edge_cases>
+                    COMMENT "Copying ${DLL}"
+                )
+                add_custom_command(TARGET test_wtree3_param_validation POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        ${DLL}
+                        $<TARGET_FILE_DIR:test_wtree3_param_validation>
                     COMMENT "Copying ${DLL}"
                 )
             endif()

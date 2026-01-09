@@ -167,31 +167,28 @@ int wtree3_update_txn(wtree3_txn_t *txn, wtree3_tree_t *tree,
     MDB_val mkey = {.mv_size = key_len, .mv_data = (void*)key};
     MDB_val old_val;
     int rc = mdb_get(txn->txn, tree->dbi, &mkey, &old_val);
-    bool exists = (rc == 0);
 
-    if (WTREE_UNLIKELY(rc != 0 && rc != MDB_NOTFOUND)) {
+    if (WTREE_UNLIKELY(rc == MDB_NOTFOUND)) {
+        set_error(error, WTREE3_LIB, WTREE3_NOT_FOUND, "Key not found");
+        return WTREE3_NOT_FOUND;
+    }
+
+    if (WTREE_UNLIKELY(rc != 0)) {
         return translate_mdb_error(rc, error);
     }
 
-    if (WTREE_LIKELY(exists)) {
-        /* Delete from indexes using old value */
-        rc = indexes_delete(tree, txn->txn, key, key_len, old_val.mv_data, old_val.mv_size, error);
-        if (WTREE_UNLIKELY(rc != 0)) return rc;
-    }
+    /* Delete from indexes using old value */
+    rc = indexes_delete(tree, txn->txn, key, key_len, old_val.mv_data, old_val.mv_size, error);
+    if (WTREE_UNLIKELY(rc != 0)) return rc;
 
     /* Insert into indexes with new value */
     rc = indexes_insert(tree, txn->txn, key, key_len, value, value_len, error);
     if (WTREE_UNLIKELY(rc != 0)) return rc;
 
-    /* Update/insert into main tree */
+    /* Update value in main tree */
     MDB_val mval = {.mv_size = value_len, .mv_data = (void*)value};
     rc = mdb_put(txn->txn, tree->dbi, &mkey, &mval, 0);
     if (WTREE_UNLIKELY(rc != 0)) return translate_mdb_error(rc, error);
-
-    /* Increment count only if this was an insert */
-    if (WTREE_UNLIKELY(!exists)) {
-        tree->entry_count++;
-    }
 
     return WTREE3_OK;
 }

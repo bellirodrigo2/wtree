@@ -283,6 +283,138 @@ int wtree3_db_register_key_extractor(
 );
 
 /* ============================================================
+ * Memory Optimization API
+ * ============================================================ */
+
+/*
+ * Memory access advice flags (portable abstraction over POSIX madvise)
+ * Used with wtree3_db_madvise()
+ */
+#define WTREE3_MADV_NORMAL      0x00  /* Default behavior */
+#define WTREE3_MADV_RANDOM      0x01  /* Expect random access (disable readahead) */
+#define WTREE3_MADV_SEQUENTIAL  0x02  /* Expect sequential access (aggressive readahead) */
+#define WTREE3_MADV_WILLNEED    0x04  /* Pages will be accessed soon (prefetch) */
+#define WTREE3_MADV_DONTNEED    0x08  /* Pages won't be needed (can free) */
+
+/*
+ * Memory locking flags
+ * Used with wtree3_db_mlock()
+ */
+#define WTREE3_MLOCK_CURRENT    0x01  /* Lock currently mapped pages */
+#define WTREE3_MLOCK_FUTURE     0x02  /* Lock future mapped pages (POSIX only) */
+
+/*
+ * Apply memory access advice to database mapping
+ *
+ * Provides hints to the OS about expected access patterns.
+ * Equivalent to POSIX madvise() but portable.
+ *
+ * @param db Database handle
+ * @param advice Advice flags (WTREE3_MADV_*)
+ * @param error Error output
+ * @return WTREE3_OK on success, error code otherwise
+ *
+ * Platform support:
+ * - Linux/BSD/macOS: Full support (uses madvise)
+ * - Windows: Partial support (WILLNEED uses PrefetchVirtualMemory)
+ * - Other: Returns error
+ *
+ * Common patterns:
+ * - Random workloads: WTREE3_MADV_RANDOM (disables readahead)
+ * - Sequential scans: WTREE3_MADV_SEQUENTIAL (aggressive readahead)
+ * - Warming cache: WTREE3_MADV_WILLNEED (prefetch pages)
+ */
+int wtree3_db_madvise(wtree3_db_t *db, unsigned int advice, gerror_t *error);
+
+/*
+ * Lock database pages in physical memory (prevent swapping)
+ *
+ * Locks the database memory map in RAM, preventing it from being
+ * swapped to disk. Useful for latency-sensitive applications.
+ *
+ * @param db Database handle
+ * @param flags Locking flags (WTREE3_MLOCK_*)
+ * @param error Error output
+ * @return WTREE3_OK on success, error code otherwise
+ *
+ * Platform support:
+ * - Linux/BSD/macOS: Full support (uses mlock/mlockall)
+ * - Windows: Full support (uses VirtualLock)
+ *
+ * Notes:
+ * - May require elevated privileges (CAP_IPC_LOCK on Linux)
+ * - Locks only currently mapped region; grows with database
+ * - Can degrade system performance if too much memory locked
+ * - MLOCK_FUTURE flag uses mlockall(MCL_FUTURE) on POSIX
+ *
+ * Recommendation: Only lock if database < 50% of system RAM
+ */
+int wtree3_db_mlock(wtree3_db_t *db, unsigned int flags, gerror_t *error);
+
+/*
+ * Unlock database pages (allow swapping)
+ *
+ * Reverses the effect of wtree3_db_mlock(), allowing pages to be
+ * swapped to disk again.
+ *
+ * @param db Database handle
+ * @param error Error output
+ * @return WTREE3_OK on success, error code otherwise
+ *
+ * Platform support:
+ * - Linux/BSD/macOS: Full support (uses munlock)
+ * - Windows: Full support (uses VirtualUnlock)
+ */
+int wtree3_db_munlock(wtree3_db_t *db, gerror_t *error);
+
+/*
+ * Get memory mapping information
+ *
+ * Returns the address and size of the database memory map.
+ * Useful for advanced memory management or custom optimizations.
+ *
+ * @param db Database handle
+ * @param out_addr Output: memory map address (can be NULL)
+ * @param out_size Output: memory map size in bytes (can be NULL)
+ * @param error Error output
+ * @return WTREE3_OK on success, error code otherwise
+ *
+ * Platform support: All platforms (uses mdb_env_info)
+ *
+ * Note: The returned address is valid until database is closed or resized.
+ */
+int wtree3_db_get_mapinfo(wtree3_db_t *db,
+                           void **out_addr,
+                           size_t *out_size,
+                           gerror_t *error);
+
+/*
+ * Prefetch a range of the database into cache
+ *
+ * Asynchronously brings pages into cache without blocking.
+ * More granular than wtree3_db_madvise(WILLNEED).
+ *
+ * @param db Database handle
+ * @param offset Byte offset from start of database
+ * @param length Number of bytes to prefetch
+ * @param error Error output
+ * @return WTREE3_OK on success, error code otherwise
+ *
+ * Platform support:
+ * - Linux/BSD/macOS: Uses madvise(MADV_WILLNEED) on range
+ * - Windows: Uses PrefetchVirtualMemory (Windows 8+)
+ *
+ * Notes:
+ * - Non-blocking, asynchronous operation
+ * - Rounds offset/length to page boundaries
+ * - Useful for warming specific sections before access
+ */
+int wtree3_db_prefetch(wtree3_db_t *db,
+                       size_t offset,
+                       size_t length,
+                       gerror_t *error);
+
+/* ============================================================
  * Transaction Operations
  * ============================================================ */
 
