@@ -331,6 +331,13 @@ static void test_all_error_strings(void **state) {
     assert_non_null(unknown_err);
 }
 
+static void test_translate_all(void **state) {
+    (void)state;
+
+    assert_true(translate_mdb_error(0,NULL) == WTREE3_OK);
+    assert_true(translate_mdb_error(MDB_TXN_FULL,NULL) == WTREE3_TXN_FULL);
+}
+
 /* ============================================================
  * Main
  * ============================================================ */
@@ -347,6 +354,7 @@ int main(void) {
         cmocka_unit_test(test_delete_txn_null_params),
         cmocka_unit_test(test_delete_nonexistent_key),
         cmocka_unit_test(test_all_error_strings),
+        cmocka_unit_test(test_translate_all),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);

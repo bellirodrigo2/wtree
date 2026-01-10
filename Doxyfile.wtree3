@@ -1,0 +1,21 @@
+# Key WTree3 Doxyfile Settings
+# Append or edit these in your existing Doxyfile
+
+PROJECT_NAME           = "WTree3"
+PROJECT_NUMBER         = "3.0"
+PROJECT_BRIEF          = "High-Performance Key-Value Storage with Secondary Indexes"
+OUTPUT_DIRECTORY       = docs/api
+INPUT                  = src/wtree3.h README.md
+RECURSIVE              = NO
+EXCLUDE_PATTERNS       = *_internal.h */test/*
+OPTIMIZE_OUTPUT_FOR_C  = YES
+EXTRACT_ALL            = YES
+EXTRACT_STATIC         = YES
+SOURCE_BROWSER         = YES
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+GENERATE_TREEVIEW      = YES
+HAVE_DOT               = YES
+CALL_GRAPH             = YES
+CALLER_GRAPH           = YES
+USE_MDFILE_AS_MAINPAGE = README.md

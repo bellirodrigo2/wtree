@@ -1,19 +1,226 @@
-/*
- * wtree3.h - Unified Storage Layer with Index Support
+/**
+ * @file wtree3.h
+ * @brief Unified Storage Layer with Index Support - High-Performance LMDB Wrapper
  *
- * A single, clean abstraction over LMDB that provides:
- * - Database and transaction management
- * - Named trees (collections) with key-value storage
- * - Optional secondary index support with automatic maintenance
- * - Entry count tracking
+ * @mainpage WTree3 - Advanced Key-Value Storage with Secondary Indexes
  *
- * This layer replaces both wtree.h and wtree2.h with a unified API.
+ * @section intro_sec Introduction
  *
- * Usage:
- *   1. Open database with wtree3_db_open()
- *   2. Create/open trees with wtree3_tree_open()
- *   3. Optionally add indexes with wtree3_tree_add_index()
- *   4. Use wtree3_insert/update/delete - indexes maintained automatically
+ * WTree3 is a sophisticated, production-ready abstraction layer over LMDB that provides
+ * a complete database solution with minimal overhead. It combines the performance of
+ * LMDB with modern database features including automatic index maintenance, ACID
+ * transactions, and advanced query capabilities.
+ *
+ * @section features_sec Key Features
+ *
+ * - **Zero-Copy Architecture**: Direct access to memory-mapped data without serialization overhead
+ * - **ACID Transactions**: Full transactional support with MVCC (Multi-Version Concurrency Control)
+ * - **Secondary Indexes**: Automatic maintenance of unique and non-unique indexes with sparse support
+ * - **Named Collections**: Multiple independent trees (collections) within a single database
+ * - **Advanced Operations**: Batch operations, range scans, prefix queries, atomic modify
+ * - **Memory Optimization**: Fine-grained control over memory access patterns (madvise, mlock, prefetch)
+ * - **Index Persistence**: Indexes are automatically saved and reloaded across database sessions
+ * - **Entry Counting**: O(1) access to collection sizes without full scans
+ *
+ * @section arch_sec Architecture
+ *
+ * WTree3 is organized into three conceptual layers:
+ *
+ * @subsection layer_core Core Layer (Database & Transactions)
+ * - Database environment management (wtree3_db_*)
+ * - Transaction lifecycle (wtree3_txn_*)
+ * - Memory optimization (madvise, mlock, prefetch)
+ *
+ * @subsection layer_trees Tree Layer (Collections)
+ * - Named tree (collection) management (wtree3_tree_*)
+ * - Basic CRUD operations (insert, update, upsert, delete, get)
+ * - Iterators for sequential access
+ *
+ * @subsection layer_indexes Index Layer (Secondary Indexes)
+ * - Index creation and population
+ * - Automatic index maintenance during CRUD operations
+ * - Index queries and verification
+ * - Sparse and unique constraint support
+ *
+ * @section quick_start Quick Start Example
+ *
+ * @code{.c}
+ * #include "wtree3.h"
+ *
+ * // 1. Define your data structure
+ * typedef struct {
+ *     int id;
+ *     char email[128];
+ *     char name[64];
+ *     int age;
+ * } user_t;
+ *
+ * // 2. Define index key extractor
+ * bool email_extractor(const void *value, size_t value_len,
+ *                      void *user_data,
+ *                      void **out_key, size_t *out_len) {
+ *     const user_t *user = (const user_t *)value;
+ *     size_t len = strlen(user->email);
+ *     if (len == 0) return false;  // Sparse: skip empty emails
+ *
+ *     *out_key = malloc(len + 1);
+ *     memcpy(*out_key, user->email, len + 1);
+ *     *out_len = len + 1;
+ *     return true;
+ * }
+ *
+ * int main() {
+ *     gerror_t error = {0};
+ *
+ *     // 3. Open database
+ *     wtree3_db_t *db = wtree3_db_open("./mydb",
+ *                                       128 * 1024 * 1024,  // 128MB
+ *                                       64,                  // max 64 trees
+ *                                       WTREE3_VERSION(1, 0),
+ *                                       0, &error);
+ *
+ *     // 4. Register extractor (library maintainer step)
+ *     wtree3_db_register_key_extractor(db, WTREE3_VERSION(1, 0), 0x01,
+ *                                      email_extractor, &error);
+ *
+ *     // 5. Open/create a tree (collection)
+ *     wtree3_tree_t *users = wtree3_tree_open(db, "users", MDB_CREATE, 0, &error);
+ *
+ *     // 6. Add unique email index
+ *     wtree3_index_config_t idx_config = {
+ *         .name = "email_idx",
+ *         .user_data = "email_field",
+ *         .user_data_len = 12,
+ *         .unique = true,
+ *         .sparse = true,
+ *         .compare = NULL
+ *     };
+ *     wtree3_tree_add_index(users, &idx_config, &error);
+ *
+ *     // 7. Insert data (index automatically updated)
+ *     user_t user = {1, "alice@example.com", "Alice", 30};
+ *     char key[32];
+ *     snprintf(key, sizeof(key), "user:%d", user.id);
+ *     wtree3_insert_one(users, key, strlen(key)+1, &user, sizeof(user), &error);
+ *
+ *     // 8. Query by index
+ *     wtree3_iterator_t *iter = wtree3_index_seek(users, "email_idx",
+ *                                                  "alice@example.com", 18, &error);
+ *     if (wtree3_iterator_valid(iter)) {
+ *         // Found! Get main tree key
+ *         const void *main_key;
+ *         size_t main_key_len;
+ *         wtree3_index_iterator_main_key(iter, &main_key, &main_key_len);
+ *
+ *         // Fetch user data
+ *         wtree3_txn_t *txn = wtree3_iterator_get_txn(iter);
+ *         const void *value;
+ *         size_t value_len;
+ *         wtree3_get_txn(txn, users, main_key, main_key_len, &value, &value_len, &error);
+ *
+ *         const user_t *found = (const user_t*)value;
+ *         printf("Found: %s, age %d\n", found->name, found->age);
+ *     }
+ *     wtree3_iterator_close(iter);
+ *
+ *     // 9. Cleanup
+ *     wtree3_tree_close(users);
+ *     wtree3_db_close(db);
+ *     return 0;
+ * }
+ * @endcode
+ *
+ * @section persistence_sec Index Persistence
+ *
+ * Indexes are automatically persisted to a metadata database and reloaded on tree open:
+ *
+ * @code{.c}
+ * // First run: Create and populate index
+ * wtree3_tree_add_index(tree, &config, &error);
+ * wtree3_tree_populate_index(tree, "email_idx", &error);
+ * wtree3_tree_close(tree);
+ * wtree3_db_close(db);
+ *
+ * // Later run: Index automatically reloaded
+ * db = wtree3_db_open(...);
+ * wtree3_db_register_key_extractor(db, ...);  // Must re-register extractors
+ * tree = wtree3_tree_open(db, "users", 0, prev_count, &error);
+ * // Index "email_idx" is now available without recreation!
+ * @endcode
+ *
+ * @section advanced_sec Advanced Features
+ *
+ * @subsection scan_ops Scanning and Iteration
+ * - wtree3_scan_range_txn(): Forward range scan with callback
+ * - wtree3_scan_reverse_txn(): Reverse range scan
+ * - wtree3_scan_prefix_txn(): Prefix-based scan
+ * - wtree3_iterator_*(): Manual cursor-based iteration
+ *
+ * @subsection batch_ops Batch Operations
+ * - wtree3_insert_many_txn(): Batch insert for performance
+ * - wtree3_get_many_txn(): Batch read
+ * - wtree3_exists_many_txn(): Batch existence check
+ * - wtree3_collect_range_txn(): Collect range into arrays
+ *
+ * @subsection atomic_ops Atomic Operations
+ * - wtree3_modify_txn(): Atomic read-modify-write
+ * - wtree3_delete_if_txn(): Conditional bulk delete
+ * - wtree3_upsert_txn(): Insert or update with custom merge
+ *
+ * @subsection mem_ops Memory Optimization
+ * - wtree3_db_madvise(): Hint access patterns (random, sequential, willneed)
+ * - wtree3_db_mlock(): Lock pages in RAM (prevent swapping)
+ * - wtree3_db_prefetch(): Async prefetch for specific ranges
+ *
+ * @section error_sec Error Handling
+ *
+ * All functions that can fail return an error code and optionally populate a gerror_t:
+ *
+ * @code{.c}
+ * gerror_t error = {0};
+ * int rc = wtree3_insert_one(tree, key, klen, val, vlen, &error);
+ * if (rc != WTREE3_OK) {
+ *     fprintf(stderr, "Error: %s\n", error.message);
+ *     if (rc == WTREE3_MAP_FULL) {
+ *         // Recoverable: resize database
+ *         wtree3_db_resize(db, new_size, &error);
+ *     } else if (rc == WTREE3_INDEX_ERROR) {
+ *         // Unique constraint violation
+ *         fprintf(stderr, "Duplicate index key\n");
+ *     }
+ * }
+ * @endcode
+ *
+ * @section thread_safety Thread Safety
+ *
+ * - Database (wtree3_db_t): Thread-safe, can be shared
+ * - Transactions (wtree3_txn_t): NOT thread-safe, one per thread
+ * - Trees (wtree3_tree_t): Thread-safe when used with proper transactions
+ * - Iterators (wtree3_iterator_t): NOT thread-safe, single-threaded use only
+ *
+ * Read transactions can run concurrently. Write transactions are serialized by LMDB.
+ *
+ * @section perf_sec Performance Characteristics
+ *
+ * - **Insert**: O(log n) for main tree + O(log n) per index
+ * - **Lookup**: O(log n) direct key, O(log n) index seek
+ * - **Range Scan**: O(k) where k is result size (zero-copy)
+ * - **Index Population**: O(n log n) where n is entry count
+ * - **Tree Count**: O(1) maintained incrementally
+ *
+ * @section compat_sec Compatibility
+ *
+ * - **C Standard**: C99 or later
+ * - **Platforms**: Linux, macOS, Windows, BSD
+ * - **LMDB Version**: 0.9.14 or later recommended
+ * - **Compilers**: GCC, Clang, MSVC
+ *
+ * @section license_sec License
+ *
+ * See project LICENSE file for details.
+ *
+ * @author WTree3 Development Team
+ * @version 3.0
  */
 
 #ifndef WTREE3_H
@@ -29,51 +236,181 @@
 extern "C" {
 #endif
 
-/* ============================================================
- * Error Codes (-3000 to -3099)
- * ============================================================ */
+/**
+ * @defgroup error_codes Error Codes
+ * @brief Return codes for WTree3 operations
+ *
+ * All error codes are negative integers in the range -3000 to -3099.
+ * Error code 0 (WTREE3_OK) indicates success.
+ *
+ * @{
+ */
 
+/** @brief Success */
 #define WTREE3_OK            0
-#define WTREE3_ERROR        -3000   /* Generic error */
-#define WTREE3_EINVAL       -3001   /* Invalid argument */
-#define WTREE3_ENOMEM       -3002   /* Out of memory */
-#define WTREE3_KEY_EXISTS   -3003   /* Key already exists (unique violation) */
-#define WTREE3_NOT_FOUND    -3004   /* Key not found */
-#define WTREE3_MAP_FULL     -3005   /* Database map is full, needs resize */
-#define WTREE3_TXN_FULL     -3006   /* Transaction is full */
-#define WTREE3_INDEX_ERROR  -3007   /* Index operation failed */
 
-/* ============================================================
- * Opaque Types
- * ============================================================ */
+/** @brief Generic error - check gerror_t message for details */
+#define WTREE3_ERROR        -3000
 
+/** @brief Invalid argument passed to function */
+#define WTREE3_EINVAL       -3001
+
+/** @brief Out of memory (malloc/calloc failed) */
+#define WTREE3_ENOMEM       -3002
+
+/** @brief Key already exists in main tree (MDB_KEYEXIST) */
+#define WTREE3_KEY_EXISTS   -3003
+
+/** @brief Key not found (MDB_NOTFOUND) */
+#define WTREE3_NOT_FOUND    -3004
+
+/**
+ * @brief Database map is full, needs resize
+ *
+ * Recoverable error. Call wtree3_db_resize() with larger mapsize.
+ */
+#define WTREE3_MAP_FULL     -3005
+
+/**
+ * @brief Transaction has too many dirty pages
+ *
+ * Occurs when a single write transaction modifies too much data.
+ * Split operation into smaller transactions.
+ */
+#define WTREE3_TXN_FULL     -3006
+
+/**
+ * @brief Index operation failed
+ *
+ * Common causes:
+ * - Unique constraint violation during insert/update
+ * - Index corruption detected during verification
+ * - Extractor function failed or returned inconsistent results
+ */
+#define WTREE3_INDEX_ERROR  -3007
+
+/** @} */ /* end of error_codes group */
+
+/**
+ * @defgroup opaque_types Opaque Handle Types
+ * @brief Opaque pointers representing internal structures
+ *
+ * These types are intentionally opaque to enforce encapsulation.
+ * Access to internal state is provided through documented API functions only.
+ *
+ * @{
+ */
+
+/**
+ * @brief Database environment handle
+ *
+ * Represents an LMDB environment containing one or more named trees.
+ * Thread-safe for concurrent access. Create with wtree3_db_open(),
+ * destroy with wtree3_db_close().
+ *
+ * @see wtree3_db_open()
+ * @see wtree3_db_close()
+ */
 typedef struct wtree3_db_t wtree3_db_t;
+
+/**
+ * @brief Transaction handle
+ *
+ * Represents a database transaction (read-only or read-write).
+ * NOT thread-safe - each thread must have its own transaction.
+ * Create with wtree3_txn_begin(), finalize with wtree3_txn_commit()
+ * or wtree3_txn_abort().
+ *
+ * @see wtree3_txn_begin()
+ * @see wtree3_txn_commit()
+ * @see wtree3_txn_abort()
+ */
 typedef struct wtree3_txn_t wtree3_txn_t;
+
+/**
+ * @brief Tree (collection) handle
+ *
+ * Represents a named key-value collection within a database, optionally
+ * with secondary indexes. Thread-safe when accessed through transactions.
+ * Create with wtree3_tree_open(), destroy with wtree3_tree_close().
+ *
+ * @see wtree3_tree_open()
+ * @see wtree3_tree_close()
+ */
 typedef struct wtree3_tree_t wtree3_tree_t;
+
+/**
+ * @brief Iterator (cursor) handle
+ *
+ * Provides sequential or seek-based access to tree entries.
+ * NOT thread-safe - single-threaded use only. Can own its own
+ * read transaction or share an existing one.
+ *
+ * @see wtree3_iterator_create()
+ * @see wtree3_iterator_close()
+ */
 typedef struct wtree3_iterator_t wtree3_iterator_t;
 
-/* ============================================================
- * Index Support Types
- * ============================================================ */
+/** @} */ /* end of opaque_types group */
 
-/*
- * Index key extraction callback
+/**
+ * @defgroup callbacks Callback Function Types
+ * @brief User-provided callback functions for custom behaviors
+ * @{
+ */
+
+/**
+ * @brief Index key extraction callback
  *
- * Called during insert/update/delete to extract index key from value.
+ * Called automatically during insert/update/delete to extract secondary index
+ * keys from main tree values. This is the core mechanism for maintaining
+ * secondary indexes.
  *
- * Parameters:
- *   value     - Raw value bytes (e.g., BSON document)
- *   value_len - Value length in bytes
- *   user_data - User context passed during index registration
- *   out_key   - Output: allocated key data (caller frees with free())
- *   out_len   - Output: key length
+ * **Extraction Process:**
+ * 1. WTree3 calls this function during CRUD operations
+ * 2. Function inspects the value and extracts the index key
+ * 3. Function allocates and returns the key (or returns false for sparse)
+ * 4. WTree3 uses the key to update the index tree
+ * 5. WTree3 frees the key after index update
  *
- * Returns:
- *   true  - Key extracted successfully, document should be indexed
- *   false - Document should NOT be indexed (sparse index behavior)
+ * **Sparse Index Behavior:**
+ * For sparse indexes, return `false` when the indexed field is missing or null.
+ * The entry will be skipped in the index, saving space.
  *
- * Note: For sparse indexes, return false when indexed field is missing/null.
- *       The callback is responsible for allocating out_key with malloc().
+ * **Memory Management:**
+ * - The callback MUST allocate `out_key` using malloc()
+ * - WTree3 will free the key after using it
+ * - Return false if extraction fails or field is missing (sparse)
+ *
+ * @param value       Raw value bytes from main tree (e.g., serialized struct, BSON document)
+ * @param value_len   Length of value in bytes
+ * @param user_data   User context from wtree3_index_config_t (e.g., field name, path)
+ * @param[out] out_key  Allocated key data (caller must malloc, WTree3 will free)
+ * @param[out] out_len  Length of extracted key
+ *
+ * @return true if key extracted successfully (index this entry)
+ * @return false if field missing/null (skip for sparse index)
+ *
+ * @see wtree3_tree_add_index()
+ * @see wtree3_db_register_key_extractor()
+ *
+ * @par Example: Extract email field from user struct
+ * @code{.c}
+ * typedef struct { int id; char email[128]; } user_t;
+ *
+ * bool email_extractor(const void *value, size_t value_len,
+ *                      void *user_data, void **out_key, size_t *out_len) {
+ *     const user_t *user = (const user_t *)value;
+ *     size_t email_len = strlen(user->email);
+ *
+ *     if (email_len == 0) return false;  // Sparse: skip empty
+ *
+ *     *out_key = malloc(email_len + 1);
+ *     memcpy(*out_key, user->email, email_len + 1);
+ *     *out_len = email_len + 1;
+ *     return true;
+ * }
+ * @endcode
  */
 typedef bool (*wtree3_index_key_fn)(
     const void *value,
@@ -83,31 +420,52 @@ typedef bool (*wtree3_index_key_fn)(
     size_t *out_len
 );
 
-/*
- * Helper macro to build version identifier
- * Upper 16 bits: major version, Lower 16 bits: minor version
- */
-#define WTREE3_VERSION(major, minor) \
-    (((uint32_t)(major) << 16) | (uint16_t)(minor))
-
-/*
- * Merge callback for upsert operations
+/**
+ * @brief Merge callback for upsert operations
  *
- * Called when upserting a key that already exists. Allows custom merge logic.
+ * Called when wtree3_upsert() or wtree3_upsert_txn() encounters an existing key.
+ * Allows custom merge logic instead of simple overwrite.
  *
- * Parameters:
- *   existing_value - Current value in database
- *   existing_len   - Current value length
- *   new_value      - New value being inserted
- *   new_len        - New value length
- *   user_data      - User context passed during tree configuration
- *   out_len        - Output: merged value length
+ * **Common Use Cases:**
+ * - Incrementing counters (merge: add new value to existing)
+ * - Updating partial fields (merge: update specific struct fields)
+ * - Conflict resolution (merge: choose newer timestamp)
  *
- * Returns:
- *   Pointer to merged value (caller must allocate with malloc, freed by wtree)
- *   NULL on error (upsert will fail)
+ * **Memory Management:**
+ * - Function MUST allocate return value using malloc()
+ * - WTree3 will free the merged value after writing
+ * - Return NULL to abort the upsert operation
  *
- * Note: If no merge callback is set, upsert overwrites with new_value
+ * @param existing_value Current value in database
+ * @param existing_len   Current value length
+ * @param new_value      New value being upserted
+ * @param new_len        New value length
+ * @param user_data      User context from wtree3_tree_set_merge_fn()
+ * @param[out] out_len   Length of merged value
+ *
+ * @return Pointer to merged value (malloc'd, WTree3 frees)
+ * @return NULL on error (upsert will fail)
+ *
+ * @note If no merge function is set, upsert simply overwrites with new_value
+ *
+ * @see wtree3_tree_set_merge_fn()
+ * @see wtree3_upsert_txn()
+ *
+ * @par Example: Increment counter on upsert
+ * @code{.c}
+ * typedef struct { int count; } counter_t;
+ *
+ * void* merge_counter(const void *existing_value, size_t existing_len,
+ *                     const void *new_value, size_t new_len,
+ *                     void *user_data, size_t *out_len) {
+ *     counter_t *merged = malloc(sizeof(counter_t));
+ *     const counter_t *old = (const counter_t*)existing_value;
+ *     const counter_t *new = (const counter_t*)new_value;
+ *     merged->count = old->count + new->count;
+ *     *out_len = sizeof(counter_t);
+ *     return merged;
+ * }
+ * @endcode
  */
 typedef void* (*wtree3_merge_fn)(
     const void *existing_value,
@@ -118,21 +476,43 @@ typedef void* (*wtree3_merge_fn)(
     size_t *out_len
 );
 
-/*
- * Scan callback for range iteration
+/**
+ * @brief Scan callback for range iteration
  *
- * Called for each key-value pair during range scan operations.
+ * Called for each key-value pair during range scan operations. Allows
+ * processing entries without manual iterator management.
  *
- * Parameters:
- *   key       - Current key (zero-copy, valid during callback only)
- *   key_len   - Key length
- *   value     - Current value (zero-copy, valid during callback only)
- *   value_len - Value length
- *   user_data - User context passed to scan function
+ * **Zero-Copy Design:**
+ * - Key and value pointers are valid ONLY during the callback
+ * - Do NOT store these pointers - copy data if needed beyond callback
+ * - Pointers become invalid after callback returns
  *
- * Returns:
- *   true  - Continue scanning
- *   false - Stop scanning (early termination)
+ * **Early Termination:**
+ * Return `false` to stop the scan early. Useful for "find first N" queries.
+ *
+ * @param key       Current key (zero-copy, valid during callback only)
+ * @param key_len   Key length
+ * @param value     Current value (zero-copy, valid during callback only)
+ * @param value_len Value length
+ * @param user_data User context passed to scan function
+ *
+ * @return true to continue scanning
+ * @return false to stop scanning (early termination)
+ *
+ * @see wtree3_scan_range_txn()
+ * @see wtree3_scan_prefix_txn()
+ *
+ * @par Example: Find and print first 10 users
+ * @code{.c}
+ * typedef struct { int count; } scan_ctx_t;
+ *
+ * bool print_user(const void *k, size_t klen, const void *v, size_t vlen, void *ud) {
+ *     scan_ctx_t *ctx = (scan_ctx_t*)ud;
+ *     const user_t *user = (const user_t*)v;
+ *     printf("User: %s\n", user->name);
+ *     return ++ctx->count < 10;  // Stop after 10
+ * }
+ * @endcode
  */
 typedef bool (*wtree3_scan_fn)(
     const void *key,
@@ -142,23 +522,52 @@ typedef bool (*wtree3_scan_fn)(
     void *user_data
 );
 
-/*
- * Modify callback for atomic read-modify-write operations
+/**
+ * @brief Modify callback for atomic read-modify-write operations
  *
- * Called to transform an existing value in-place within a transaction.
+ * Called by wtree3_modify_txn() to atomically transform a value within a transaction.
+ * This is the preferred way to implement atomic updates (e.g., increment counter).
  *
- * Parameters:
- *   existing_value - Current value in database (NULL if key doesn't exist)
- *   existing_len   - Current value length (0 if key doesn't exist)
- *   user_data      - User context passed to modify function
- *   out_len        - Output: new value length
+ * **Operation Modes:**
+ * - **Update**: existing_value is not NULL → return modified value
+ * - **Insert**: existing_value is NULL → return new value (creates entry)
+ * - **Delete**: existing_value is not NULL, return NULL → deletes entry
+ * - **Abort**: existing_value is NULL, return NULL → no operation
  *
- * Returns:
- *   Pointer to new value (caller must allocate with malloc, freed by wtree)
- *   NULL to delete the key (when existing_value is not NULL)
- *   NULL to abort operation (when existing_value is NULL)
+ * **Memory Management:**
+ * - Function MUST allocate return value using malloc()
+ * - WTree3 will free the returned value after writing
+ * - Return NULL to delete (if exists) or abort (if doesn't exist)
  *
- * Note: Returned value replaces existing value atomically
+ * **Atomicity:**
+ * The entire read-modify-write happens within a single transaction, ensuring
+ * no other transaction can modify the value between read and write.
+ *
+ * @param existing_value Current value (NULL if key doesn't exist)
+ * @param existing_len   Current value length (0 if key doesn't exist)
+ * @param user_data      User context passed to wtree3_modify_txn()
+ * @param[out] out_len   Length of returned value
+ *
+ * @return Pointer to new value (malloc'd, WTree3 frees)
+ * @return NULL to delete existing entry or abort if no entry
+ *
+ * @see wtree3_modify_txn()
+ *
+ * @par Example: Atomically increment counter
+ * @code{.c}
+ * void* increment(const void *existing_value, size_t existing_len,
+ *                 void *user_data, size_t *out_len) {
+ *     counter_t *new = malloc(sizeof(counter_t));
+ *     if (existing_value) {
+ *         const counter_t *old = (const counter_t*)existing_value;
+ *         new->count = old->count + 1;
+ *     } else {
+ *         new->count = 1;  // Initialize if doesn't exist
+ *     }
+ *     *out_len = sizeof(counter_t);
+ *     return new;
+ * }
+ * @endcode
  */
 typedef void* (*wtree3_modify_fn)(
     const void *existing_value,
@@ -167,21 +576,37 @@ typedef void* (*wtree3_modify_fn)(
     size_t *out_len
 );
 
-/*
- * Predicate callback for conditional operations
+/**
+ * @brief Predicate callback for conditional operations
  *
- * Used to test whether a key-value pair should be deleted or collected.
+ * Used to test whether a key-value pair matches a condition. Powers
+ * conditional bulk delete and filtered collection operations.
  *
- * Parameters:
- *   key       - Current key (zero-copy, valid during callback only)
- *   key_len   - Key length
- *   value     - Current value (zero-copy, valid during callback only)
- *   value_len - Value length
- *   user_data - User context passed to operation
+ * **Zero-Copy Design:**
+ * - Key and value pointers are valid ONLY during the callback
+ * - Do NOT store these pointers - copy data if needed
  *
- * Returns:
- *   true  - Predicate matches (delete/collect this entry)
- *   false - Predicate doesn't match (skip this entry)
+ * @param key       Current key (zero-copy, valid during callback only)
+ * @param key_len   Key length
+ * @param value     Current value (zero-copy, valid during callback only)
+ * @param value_len Value length
+ * @param user_data User context passed to operation
+ *
+ * @return true if predicate matches (delete/collect this entry)
+ * @return false if predicate doesn't match (skip this entry)
+ *
+ * @see wtree3_delete_if_txn()
+ * @see wtree3_collect_range_txn()
+ *
+ * @par Example: Delete inactive users
+ * @code{.c}
+ * bool is_inactive(const void *k, size_t klen, const void *v, size_t vlen, void *ud) {
+ *     const user_t *user = (const user_t*)v;
+ *     return user->active == 0;
+ * }
+ *
+ * // Usage: wtree3_delete_if_txn(txn, tree, NULL, 0, NULL, 0, is_inactive, NULL, &deleted, &err);
+ * @endcode
  */
 typedef bool (*wtree3_predicate_fn)(
     const void *key,
@@ -191,26 +616,111 @@ typedef bool (*wtree3_predicate_fn)(
     void *user_data
 );
 
-/*
- * Index configuration
+/** @} */ /* end of callbacks group */
+
+/**
+ * @defgroup config_types Configuration Structures
+ * @brief Configuration and data structures for WTree3 operations
+ * @{
+ */
+
+/**
+ * @brief Helper macro to build version identifier
+ *
+ * Combines major and minor version into a single 32-bit identifier.
+ * Upper 16 bits: major version, Lower 16 bits: minor version.
+ *
+ * Used for schema versioning and extractor registration.
+ *
+ * @param major Major version number (0-65535)
+ * @param minor Minor version number (0-65535)
+ * @return 32-bit version identifier
+ *
+ * @par Example:
+ * @code{.c}
+ * uint32_t v1_0 = WTREE3_VERSION(1, 0);  // 0x00010000
+ * uint32_t v2_5 = WTREE3_VERSION(2, 5);  // 0x00020005
+ * @endcode
+ */
+#define WTREE3_VERSION(major, minor) \
+    (((uint32_t)(major) << 16) | (uint16_t)(minor))
+
+/**
+ * @brief Index configuration structure
+ *
+ * Defines the properties of a secondary index including name, uniqueness,
+ * sparseness, and custom comparators.
+ *
+ * **Index Naming:**
+ * - Index name must be unique within a tree
+ * - Internal tree name: `idx:<tree_name>:<index_name>`
+ * - Examples: "email_idx", "name_1", "category_sparse"
+ *
+ * **User Data:**
+ * - Persisted in metadata database
+ * - Passed to extractor callback for context
+ * - Can contain field names, paths, BSON specs, etc.
+ *
+ * **Unique vs Non-Unique:**
+ * - Unique: Each index key can appear at most once (enforced)
+ * - Non-Unique: Multiple entries can have same index key (allows duplicates)
+ *
+ * **Sparse vs Dense:**
+ * - Sparse: Entries are indexed only if extractor returns true
+ * - Dense: All entries must be indexed (extractor returning false is an error)
+ *
+ * @see wtree3_tree_add_index()
+ * @see wtree3_index_key_fn
  */
 typedef struct wtree3_index_config {
-    const char *name;           /* Index name (e.g., "email_1") */
-    const void *user_data;      /* User context for callback (persisted as-is, e.g., BSON field spec) */
-    size_t user_data_len;       /* Length of user_data in bytes */
-    bool unique;                /* Unique constraint */
-    bool sparse;                /* Skip entries where key_fn returns false */
-    MDB_cmp_func *compare;      /* Custom key comparator (NULL for default) */
-    MDB_cmp_func *dupsort_compare; /* Custom duplicate value comparator (NULL for default, only for non-unique indexes) */
+    /** Index name (e.g., "email_1", "category_idx") - must be unique per tree */
+    const char *name;
+
+    /** User context for extractor callback - persisted in metadata (can be NULL) */
+    const void *user_data;
+
+    /** Length of user_data in bytes (0 if user_data is NULL) */
+    size_t user_data_len;
+
+    /** Unique constraint - true: at most one entry per index key */
+    bool unique;
+
+    /** Sparse index - true: skip entries where extractor returns false */
+    bool sparse;
+
+    /** Custom key comparator function (NULL for lexicographic) */
+    MDB_cmp_func *compare;
+
+    /**
+     * Custom duplicate value comparator (NULL for default)
+     * Only applies to non-unique indexes
+     */
+    MDB_cmp_func *dupsort_compare;
 } wtree3_index_config_t;
 
-/* Key-Value pair for batch operations */
+/**
+ * @brief Key-value pair structure for batch operations
+ *
+ * Used in batch insert, batch read, and batch existence check operations.
+ * Provides a convenient way to group multiple key-value pairs.
+ *
+ * **Usage Notes:**
+ * - All pointers must remain valid for the duration of the operation
+ * - For batch reads, value/value_len are outputs (pass NULL)
+ * - For batch writes, all fields must be populated
+ *
+ * @see wtree3_insert_many_txn()
+ * @see wtree3_get_many_txn()
+ * @see wtree3_exists_many_txn()
+ */
 typedef struct wtree3_kv {
-    const void *key;
-    size_t key_len;
-    const void *value;
-    size_t value_len;
+    const void *key;       /**< Key data */
+    size_t key_len;        /**< Key length in bytes */
+    const void *value;     /**< Value data (NULL for read operations) */
+    size_t value_len;      /**< Value length in bytes (0 for read operations) */
 } wtree3_kv_t;
+
+/** @} */ /* end of config_types group */
 
 /* ============================================================
  * Database Operations

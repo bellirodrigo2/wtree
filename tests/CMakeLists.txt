@@ -138,6 +138,22 @@ target_include_directories(test_wtree3_dupsort PRIVATE ${cmocka_SOURCE_DIR}/incl
 target_link_libraries(test_wtree3_dupsort PRIVATE wtree3 ${CMOCKA_LIBRARY})
 add_test(NAME test_wtree3_dupsort COMMAND test_wtree3_dupsort)
 
+# Test for wtree3 LMDB error injection (transaction rollback verification)
+add_executable(test_wtree3_lmdb_errors test_wtree3_lmdb_errors.c)
+target_include_directories(test_wtree3_lmdb_errors PRIVATE ${cmocka_SOURCE_DIR}/include)
+target_link_libraries(test_wtree3_lmdb_errors PRIVATE wtree3 ${CMOCKA_LIBRARY})
+
+# Add linker wrapping for LMDB functions (GNU ld style)
+if(NOT WIN32 OR MINGW)
+    target_link_options(test_wtree3_lmdb_errors PRIVATE
+        -Wl,--wrap=mdb_put
+        -Wl,--wrap=mdb_get
+        -Wl,--wrap=mdb_del
+    )
+endif()
+
+add_test(NAME test_wtree3_lmdb_errors COMMAND test_wtree3_lmdb_errors)
+
 # Platform-specific settings
 if(WIN32)
     target_compile_definitions(test_gerror PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -159,6 +175,7 @@ if(WIN32)
     target_compile_definitions(test_wtree3_edge_cases PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wtree3_param_validation PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(test_wtree3_dupsort PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(test_wtree3_lmdb_errors PRIVATE _CRT_SECURE_NO_WARNINGS)
 
     # Copy cmocka DLL to test directory on Windows
     add_custom_command(TARGET test_gerror POST_BUILD
@@ -294,6 +311,13 @@ if(WIN32)
         COMMENT "Copying cmocka DLL to test directory"
     )
 
+    add_custom_command(TARGET test_wtree3_lmdb_errors POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:cmocka>
+            $<TARGET_FILE_DIR:test_wtree3_lmdb_errors>
+        COMMENT "Copying cmocka DLL to test directory"
+    )
+
     # For MinGW builds, copy required runtime DLLs
     if(MINGW)
         # Find MinGW bin directory
@@ -419,6 +443,12 @@ if(WIN32)
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                         ${DLL}
                         $<TARGET_FILE_DIR:test_wtree3_dupsort>
+                    COMMENT "Copying ${DLL}"
+                )
+                add_custom_command(TARGET test_wtree3_lmdb_errors POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        ${DLL}
+                        $<TARGET_FILE_DIR:test_wtree3_lmdb_errors>
                     COMMENT "Copying ${DLL}"
                 )
             endif()

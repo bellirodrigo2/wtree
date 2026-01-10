@@ -11,6 +11,8 @@ RelWithDebInfo/
 
 todo
 run_coverage.py
+NUL
+nul
 
 # Test and benchmark folders
 test_*/
@@ -93,12 +95,16 @@ testdb/
 .clangd
 .cache/
 
-# Documentation
+# Documentation (generated)
+docs/api/                # Generated Doxygen HTML/LaTeX output
 docs/build/
 docs/_build/
-Doxyfile
 doxygen/
 *.dox
+
+# Keep documentation source files
+!docs/*.md
+!docs/README.md
 
 # Test and coverage
 *.gcda

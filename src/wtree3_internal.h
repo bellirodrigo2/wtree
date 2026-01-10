@@ -126,13 +126,6 @@ int with_read_txn(wtree3_db_t *db,
                   void *user_data,
                   gerror_t *error);
 
-/* Cursor wrapper helper */
-WTREE_WARN_UNUSED
-int with_cursor(MDB_txn *txn, MDB_dbi dbi,
-                int (*fn)(MDB_cursor*, void*),
-                void *user_data,
-                gerror_t *error);
-
 /* Build extractor ID from version and flags */
 static inline uint64_t build_extractor_id(uint32_t version, uint32_t flags) {
     return ((uint64_t)version << 32) | flags;

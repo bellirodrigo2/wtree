@@ -365,36 +365,6 @@ int with_read_txn(wtree3_db_t *db,
 }
 
 /* ============================================================
- * Cursor Wrapper Helper (Internal)
- * ============================================================ */
-
-/*
- * Execute a function with a cursor
- * Automatically handles cursor open/close
- */
-WTREE_WARN_UNUSED
-int with_cursor(MDB_txn *txn, MDB_dbi dbi,
-                int (*fn)(MDB_cursor*, void*),
-                void *user_data,
-                gerror_t *error) {
-    if (WTREE_UNLIKELY(!txn || !fn)) {
-        set_error(error, WTREE3_LIB, WTREE3_EINVAL, "Invalid parameters");
-        return WTREE3_EINVAL;
-    }
-
-    MDB_cursor *cursor;
-    int rc = mdb_cursor_open(txn, dbi, &cursor);
-    if (WTREE_UNLIKELY(rc != 0)) {
-        return translate_mdb_error(rc, error);
-    }
-
-    rc = fn(cursor, user_data);
-    mdb_cursor_close(cursor);
-
-    return rc;  /* Error already set by fn if needed */
-}
-
-/* ============================================================
  * Extractor Registry Operations
  * ============================================================ */
 
